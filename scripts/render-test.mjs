@@ -322,7 +322,7 @@ if (fileRow !== null) {
         React.createElement(diffRegistration.component, {
           ...diffRegistration.declaration.inject(),
           actions: { close: () => { closed = true } },
-          useTabNavigation: (selector) => (typeof selector === 'function' ? selector({ params, revision: 1 }) : { params, revision: 1 }),
+          useTabInfo: () => ({ tab: { id: 'tab-1', navigation: { params, revision: 1 } } }),
         }),
       )
       await new Promise((resolve) => setTimeout(resolve, 40))
