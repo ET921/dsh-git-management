@@ -294,15 +294,7 @@ const PANEL_CSS = `
 
 /* ---- hover detail: three zones, each with its own surface ---- */
 .gmg-hovertarget { display: contents; }
-.gmg-inlinedetail {
-  margin: 2px 0 6px 10px;
-  max-height: 260px;
-  overflow: auto;
-  overscroll-behavior: contain;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-1);
-}
+
 .gmg-hover {
   position: fixed; z-index: 4000;
   max-width: 400px; min-width: 260px;

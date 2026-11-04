@@ -71,13 +71,13 @@ function useDetail(key, action, params) {
 }
 
 /**
- * The floating layer: anchored beside the hovered row, never on top of it.
+ * The floating layer.
  *
- * The card stays inside the column and above or below the row it describes,
- * never on top of it. Long messages do not grow the card past the window: it
- * is capped and scrolls, and it stays open while the pointer is inside it, so
- * the scrollbar is reachable. VS Code fixed the same class of bug in its debug
- * hover ("hover expands over cursor", microsoft/vscode@37fe2d0).
+ * One direction, always: the card opens to the **left** of the row, its right
+ * edge level with the row's left edge, so the panel and the row stay readable
+ * and the card never sits under the pointer. Its size follows the content —
+ * no cap to clip a line in half — and it only scrolls when the content is
+ * taller than the window.
  *
  * @param props - `{ anchor, onEnter, onLeave, children }`.
  * @returns the card, portalled when the module table allows it.
@@ -89,20 +89,15 @@ function HoverLayer(props) {
     const element = ref.current
     if (element === null) return
     const anchor = props.anchor
-    const width = Math.max(240, Math.min(anchor.width ?? 320, 380))
-    const maxHeight = Math.max(160, Math.min(Math.round(window.innerHeight * 0.46), 340))
-    // Measure at the cap, not at the natural height: a long commit body must not
-    // decide where the card goes.
-    const height = Math.min(element.getBoundingClientRect().height, maxHeight)
-    const aboveRoom = anchor.top - 8
-    const belowRoom = window.innerHeight - anchor.bottom - 8
-    // The branch pill asks for a fixed direction: its bar sits at the top of the
-    // panel, so a card that kept flipping sides would jump between openings.
-    const placeAbove = props.below === true ? false : aboveRoom >= height || aboveRoom >= belowRoom
-    const preferred = placeAbove ? anchor.top - height - 8 : anchor.bottom + 8
-    const top = Math.max(8, Math.min(preferred, window.innerHeight - height - 8))
-    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 12))
-    setStyle({ left, top, width, maxHeight, visibility: 'visible' })
+    const rect = element.getBoundingClientRect()
+    const width = Math.max(240, Math.min(420, rect.width || 360))
+    const height = rect.height
+    const fits = height <= window.innerHeight - 16
+    // Right edge on the row's left edge, then keep the whole card on screen
+    // when the window is too narrow for that.
+    const left = Math.max(8, Math.min(anchor.left - width - 12, window.innerWidth - width - 8))
+    const top = Math.max(8, Math.min(anchor.top, window.innerHeight - Math.min(height, window.innerHeight - 16) - 8))
+    setStyle({ left, top, width, ...(fits ? {} : { maxHeight: window.innerHeight - 16, overflowY: 'auto' }), visibility: 'visible' })
   }, [props.anchor.left, props.anchor.top, props.anchor.right, props.anchor.bottom, props.anchor.width, props.children])
   const card = h(
     'div',

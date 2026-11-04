@@ -242,7 +242,7 @@ function GitPanel(props) {
             : state.log.slice(0, showAllHistory ? state.log.length : 6).map((commit) =>
                 h(
                   HoverTarget,
-                  { key: commit.sha, inline: true, card: h(CommitHoverCard, { commit, t }) },
+                  { key: commit.sha, card: h(CommitHoverCard, { commit, t }) },
                   h(
                     'div',
                     { className: 'gmg-commit-row' },
@@ -486,7 +486,7 @@ function BranchBar(props) {
     { className: 'gmg-branchbar' },
     h(
       HoverTarget,
-      { below: true, card: status.branch === null ? null : h(BranchHoverCard, { branch: status.branch, t }) },
+      { card: status.branch === null ? null : h(BranchHoverCard, { branch: status.branch, t }) },
       h(
         'span',
         { className: `gmg-branch${status.branch === null ? ' is-detached' : ''}` },
