@@ -1,0 +1,11 @@
+# dsh-git-management bundle patch: inserts the plugin's one row into the web
+# profile roster. Applied as a profile bundle layer — the `dsh.bundle.patch`
+# manifest field, read by dsh-app-boot when it composes `dsh.profile.bundles`
+# in order over an empty entry list.
+#
+# The row is what makes the package visible at all: the host half registers
+# the /dsh-git/api route, and the browser half (declared by `dsh.client`) is
+# discovered by dsh-client-modules scanning mounted packages for that field.
+- insert:
+    - id: git-management
+      name: dsh-git-management
