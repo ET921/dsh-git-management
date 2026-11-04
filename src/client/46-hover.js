@@ -73,10 +73,13 @@ function useDetail(key, action, params) {
 /**
  * The floating layer: anchored beside the hovered row, never on top of it.
  *
- * The right column hugs the window edge, so the card opens to its left; only a
- * window too narrow for that falls back to the row's right side.
+ * The card stays inside the column and above or below the row it describes,
+ * never on top of it. Long messages do not grow the card past the window: it
+ * is capped and scrolls, and it stays open while the pointer is inside it, so
+ * the scrollbar is reachable. VS Code fixed the same class of bug in its debug
+ * hover ("hover expands over cursor", microsoft/vscode@37fe2d0).
  *
- * @param props - `{ anchor, children }`, where anchor is a DOMRect-like box.
+ * @param props - `{ anchor, onEnter, onLeave, children }`.
  * @returns the card, portalled when the module table allows it.
  */
 function HoverLayer(props) {
@@ -85,20 +88,25 @@ function HoverLayer(props) {
   useLayoutEffect(() => {
     const element = ref.current
     if (element === null) return
-    const rect = element.getBoundingClientRect()
     const anchor = props.anchor
-    // Stay inside the column the row lives in: a card that opens over the
-    // conversation hides text the user was reading. Width follows the row, and
-    // the card sits above the row (or below when the row is near the top), so
-    // the row being pointed at stays visible either way.
-    const width = Math.max(240, Math.min(anchor.width ?? rect.width, 420))
+    const width = Math.max(240, Math.min(anchor.width ?? 320, 380))
+    const maxHeight = Math.max(160, Math.min(Math.round(window.innerHeight * 0.46), 340))
+    // Measure at the cap, not at the natural height: a long commit body must not
+    // decide where the card goes.
+    const height = Math.min(element.getBoundingClientRect().height, maxHeight)
+    const aboveRoom = anchor.top - 8
+    const belowRoom = window.innerHeight - anchor.bottom - 8
+    const placeAbove = aboveRoom >= height || aboveRoom >= belowRoom
+    const preferred = placeAbove ? anchor.top - height - 8 : anchor.bottom + 8
+    const top = Math.max(8, Math.min(preferred, window.innerHeight - height - 8))
     const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 12))
-    const above = anchor.top - rect.height - 8
-    const below = anchor.bottom + 8
-    const top = above >= 8 ? above : Math.max(8, Math.min(below, window.innerHeight - rect.height - 12))
-    setStyle({ left, top, width, visibility: 'visible' })
+    setStyle({ left, top, width, maxHeight, visibility: 'visible' })
   }, [props.anchor.left, props.anchor.top, props.anchor.right, props.anchor.bottom, props.anchor.width, props.children])
-  const card = h('div', { ref, className: 'gmg-hover', style }, props.children)
+  const card = h(
+    'div',
+    { ref, className: 'gmg-hover', style, onMouseEnter: props.onEnter, onMouseLeave: props.onLeave },
+    props.children,
+  )
   if (typeof reactDom?.createPortal !== 'function') return card
   return reactDom.createPortal(card, document.body)
 }
@@ -108,17 +116,37 @@ const HOVER_ROW_SELECTOR = '.gmg-commit-row, .gmg-branch'
 
 /**
  * Wrap a row so that resting the pointer on it enlarges it.
+ *
+ * Leaving the row does not close the card at once: the pointer may be on its
+ * way into the card to scroll it. The close is postponed, and entering the card
+ * cancels that.
+ *
  * @param props - `{ card, delay, children }`; `card` is the element to float.
  * @returns the wrapper element.
  */
 function HoverTarget(props) {
   const [anchor, setAnchor] = useState(null)
   const timer = useRef(undefined)
+  const hideTimer = useRef(undefined)
   const cancel = () => {
     if (timer.current !== undefined) {
       window.clearTimeout(timer.current)
       timer.current = undefined
     }
+  }
+  const keepOpen = () => {
+    if (hideTimer.current !== undefined) {
+      window.clearTimeout(hideTimer.current)
+      hideTimer.current = undefined
+    }
+  }
+  const scheduleHide = () => {
+    cancel()
+    keepOpen()
+    hideTimer.current = window.setTimeout(() => {
+      hideTimer.current = undefined
+      setAnchor(null)
+    }, 180)
   }
   const enter = (event) => {
     const target = event.target
@@ -129,18 +157,28 @@ function HoverTarget(props) {
         ? { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY, width: 320 }
         : { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width }
     cancel()
+    keepOpen()
     timer.current = window.setTimeout(() => setAnchor(next), props.delay ?? 280)
   }
   const leave = () => {
+    scheduleHide()
+  }
+  const closeNow = () => {
     cancel()
+    keepOpen()
     setAnchor(null)
   }
-  useEffect(() => cancel, [])
+  useEffect(() => {
+    return () => {
+      cancel()
+      keepOpen()
+    }
+  }, [])
   return h(
     'div',
-    { className: 'gmg-hovertarget', onMouseEnter: enter, onMouseLeave: leave, onMouseDown: leave },
+    { className: 'gmg-hovertarget', onMouseEnter: enter, onMouseLeave: leave, onMouseDown: closeNow },
     props.children,
-    anchor === null ? null : h(HoverLayer, { anchor }, props.card),
+    anchor === null ? null : h(HoverLayer, { anchor, onEnter: keepOpen, onLeave: scheduleHide }, props.card),
   )
 }
 

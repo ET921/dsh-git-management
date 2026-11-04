@@ -406,6 +406,7 @@ if (commitRow !== null) {
   const card = document.body.querySelector('.gmg-hover')
   const cardText = card?.textContent ?? ''
   check('resting on a commit floats a card', card !== null, document.body.innerHTML.slice(-200))
+  check('the card is capped and scrolls instead of covering the list', card !== null && card.style.maxHeight !== '', card?.getAttribute('style'))
   check('the card carries the commit subject', cardText.includes('wire the sidebar panel'), cardText.slice(0, 160))
   check('the author is the GitHub account, not git user.name', cardText.includes('EvT') && cardText.includes('Ada') === false, cardText.slice(0, 120))
   check('the card renders the commit body', cardText.includes('A longer body line.'), cardText.slice(0, 240))

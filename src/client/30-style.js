@@ -303,13 +303,15 @@ const PANEL_CSS = `
   background: var(--dsw-alias-bg-overlay);
   box-shadow: 0 16px 40px rgba(0, 0, 0, .42);
   font-size: 12px;
-  pointer-events: none;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
 }
 .gmg-hovercard { display: flex; flex-direction: column; }
 .gmg-hoverzone { padding: 8px 11px; }
 .gmg-hoverzone.is-head {
   display: flex; align-items: center; gap: 7px;
+  position: sticky; top: 0; z-index: 1;
   background: var(--dsw-alias-bg-layer-2);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
