@@ -80,7 +80,13 @@ function respond(action, params) {
     case 'log':
       return LOG
     case 'branches':
-      return { current: 'main', branches: [{ name: 'main', current: true, upstream: 'origin/main', sha: 'abc1234', date: null }] }
+      return {
+        current: 'main',
+        branches: [
+          { name: 'main', current: true, upstream: 'origin/main', sha: 'abc1234', date: null },
+          { name: 'dev', current: false, upstream: null, sha: 'def5678', date: null },
+        ],
+      }
     case 'diff':
       return {
         file: 'src/App.tsx',
@@ -470,6 +476,46 @@ if (commitRow !== null) {
   Object.defineProperty(dom.window, 'innerHeight', { configurable: true, value: 768 })
 } else {
   check('a commit row exists to hover', false)
+}
+
+// The branch pill opens a themed menu, not the OS <select> popup.
+const branchPill = container.querySelector('.gmg-branch')
+if (branchPill !== null) {
+  check('the branch pill is a button, not a select', branchPill.tagName === 'BUTTON' && container.querySelector('select.gmg-branch-select') === null)
+
+  await act(async () => {
+    branchPill.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  })
+  const branchMenu = document.body.querySelector('.gmg-branchmenu')
+  check('clicking the pill opens a menu', branchMenu !== null, document.body.innerHTML.slice(-200))
+  check('the menu lists every local branch', branchMenu?.querySelectorAll('.gmg-branchitem').length === 2, branchMenu?.textContent)
+  check('the current branch is marked once', branchMenu?.querySelectorAll('.gmg-branchitem.is-current').length === 1, branchMenu?.textContent)
+  check('the menu opens on the current branch', branchMenu?.querySelector('.gmg-branchitem.is-active')?.textContent?.includes('main') === true, branchMenu?.textContent)
+
+  await act(async () => {
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  })
+  check('Escape closes the menu', document.body.querySelector('.gmg-branchmenu') === null)
+
+  await act(async () => {
+    branchPill.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  })
+  const devRow = [...document.body.querySelectorAll('.gmg-branchitem')].find((item) => item.textContent === 'dev')
+  if (devRow !== undefined) {
+    await act(async () => {
+      devRow.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    })
+    check('picking a branch asks the host to switch', calls.some((call) => call.action === 'switch' && call.params?.branch === 'dev'), calls.map((call) => `${call.action}:${call.params?.branch ?? ''}`))
+    check('the menu closes after picking', document.body.querySelector('.gmg-branchmenu') === null)
+  } else {
+    check('a dev row is offered', false, document.body.querySelector('.gmg-branchmenu')?.textContent)
+  }
+} else {
+  check('a branch pill exists', false)
 }
 
 await act(async () => {

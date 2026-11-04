@@ -72,21 +72,49 @@ const PANEL_CSS = `
   overflow: hidden;
 }
 .gmg-branchbar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; flex-wrap: wrap; }
+.gmg-branchpick { position: relative; display: inline-flex; min-width: 0; }
 .gmg-branch {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 9px 3px 7px;
   border-radius: 999px;
   background: var(--dsw-alias-bg-layer-2);
   border: 1px solid var(--dsw-alias-border-l1);
+  color: inherit; font-family: var(--gmg-mono); font-size: 12px;
+  max-width: 320px; overflow: hidden; cursor: pointer;
+  appearance: none;
+}
+.gmg-branch:hover, .gmg-branch.is-open { border-color: var(--dsw-alias-border-l2); }
+.gmg-branch svg:last-child { transition: transform .12s ease; }
+.gmg-branch.is-open svg:last-child { transform: rotate(180deg); }
+.gmg-branch:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.gmg-branch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The portalled surfaces sit outside .gmg-root, so they carry the mono stack
+   the panel defines there: a custom property does not cross that boundary. */
+.gmg-hover, .gmg-branchmenu {
+  --gmg-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+.gmg-branchmenu {
+  position: fixed; z-index: 4100;
+  padding: 4px;
+  display: flex; flex-direction: column; gap: 1px;
+  max-height: 300px; overflow: auto;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-overlay);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .45);
+}
+.gmg-branchitem {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 7px;
   font-family: var(--gmg-mono); font-size: 12px;
-  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
 }
-.gmg-branch { position: relative; }
-.gmg-branch:hover { border-color: var(--dsw-alias-border-l2); }
-.gmg-branch-select {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  opacity: 0; cursor: pointer; border: none; background: transparent;
-}
+.gmg-branchitem.is-active { background: var(--dsw-alias-bg-layer-2); }
+.gmg-branchitem.is-current { color: var(--dsw-alias-brand-primary); }
+.gmg-branchitem-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmg-branchcheck { display: inline-flex; flex: none; }
+.gmg-branchmenu-empty { padding: 8px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .gmg-branch.is-detached { color: var(--dsw-alias-state-warn-primary); }
 .gmg-track { color: var(--dsw-alias-label-secondary); font-size: 11px; font-family: var(--gmg-mono); display: inline-flex; align-items: center; gap: 4px; }
 .gmg-ahead { color: var(--dsw-alias-state-success-primary); }

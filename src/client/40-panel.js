@@ -467,6 +467,175 @@ function GitTabTitle(props) {
 }
 
 /**
+ * The branch pill and its menu.
+ *
+ * A native `<select>` used to do this job from under the pill, and the list it
+ * opened was drawn by the OS: a white sheet with a system-blue selection on
+ * top of a dark panel. The menu here is the same floating surface the hover
+ * cards use — theme tokens, rounded corners, the panel's own shadow — and it
+ * marks the current branch instead of leaving the reader to spot which row is
+ * already active.
+ *
+ * @param props - `{ status, branches, t }`.
+ * @returns the pill with its menu.
+ */
+function BranchPicker(props) {
+  const { status, branches, t } = props
+  const [open, setOpen] = useState(false)
+  const [anchor, setAnchor] = useState(null)
+  const [active, setActive] = useState(0)
+  const pill = useRef(null)
+  const menu = useRef(null)
+  const rows = branches?.branches ?? []
+  const current = status.branch ?? null
+  const names = rows.map((row) => row.name)
+
+  const close = () => setOpen(false)
+  const pick = (name) => {
+    close()
+    if (name !== current) gitStore.switchBranch(name)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event) => {
+      const target = event.target
+      if (menu.current?.contains(target) === true) return
+      if (pill.current?.contains(target) === true) return
+      close()
+    }
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        close()
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setActive((index) => Math.min(names.length - 1, index + 1))
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setActive((index) => Math.max(0, index - 1))
+        return
+      }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        const name = names[active]
+        if (name !== undefined) pick(name)
+      }
+    }
+    const onResize = () => close()
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open, active, names.length])
+
+  // Keep the arrow-key highlight inside the visible part of a long list.
+  useEffect(() => {
+    if (!open) return
+    menu.current?.querySelector('.gmg-branchitem.is-active')?.scrollIntoView?.({ block: 'nearest' })
+  }, [open, active])
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    // The menu is portalled, so the pill's box is captured now: by the time the
+    // menu renders the button may already have been scrolled or re-styled.
+    setAnchor(pill.current?.getBoundingClientRect() ?? null)
+    setActive(Math.max(0, names.indexOf(current)))
+    setOpen(true)
+  }
+
+  return h(
+    'div',
+    { className: 'gmg-branchpick' },
+    h(
+      'button',
+      {
+        ref: pill,
+        type: 'button',
+        className: `gmg-branch${current === null ? ' is-detached' : ''}${open ? ' is-open' : ''}`,
+        title: t('switchBranch'),
+        'aria-haspopup': 'listbox',
+        'aria-expanded': open,
+        onClick: toggle,
+      },
+      h(IconBranch, { size: 13 }),
+      h('span', { className: 'gmg-branch-name' }, current ?? t('detached')),
+      h(IconChevronDown, { size: 10 }),
+    ),
+    open && anchor !== null
+      ? h(BranchMenu, { anchor, rows, current, active, onHover: setActive, onPick: pick, menuRef: menu, t })
+      : null,
+  )
+}
+
+/**
+ * The branch list, portalled so the panel's scroll box cannot clip it.
+ *
+ * @param props - `{ anchor, rows, current, active, onHover, onPick, menuRef, t }`.
+ * @returns the menu.
+ */
+function BranchMenu(props) {
+  const { anchor, rows, current, active, onHover, onPick, menuRef, t } = props
+  const [style, setStyle] = useState({ left: -9999, top: 0, visibility: 'hidden' })
+  useLayoutEffect(() => {
+    const element = menuRef.current
+    if (element === null || anchor === null) return
+    const rect = element.getBoundingClientRect()
+    const width = Math.min(300, Math.max(200, Math.round(anchor.width) || 0))
+    const below = anchor.bottom + 6
+    const fitsBelow = below + rect.height <= window.innerHeight - 8
+    setStyle({
+      left: Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)),
+      top: fitsBelow ? below : Math.max(8, anchor.top - rect.height - 6),
+      width,
+      visibility: 'visible',
+    })
+  }, [anchor, rows.length])
+  const list = h(
+    'div',
+    {
+      ref: menuRef,
+      className: 'gmg-branchmenu',
+      role: 'listbox',
+      'aria-label': t('switchBranch'),
+      style,
+    },
+    rows.length === 0
+      ? h('div', { className: 'gmg-branchmenu-empty' }, t('loading'))
+      : rows.map((row, index) =>
+          h(
+            'div',
+            {
+              key: row.name,
+              role: 'option',
+              'aria-selected': row.name === current,
+              className: `gmg-branchitem${row.name === current ? ' is-current' : ''}${index === active ? ' is-active' : ''}`,
+              title: row.upstream ?? row.name,
+              onMouseEnter: () => onHover(index),
+              onMouseDown: (event) => event.preventDefault(),
+              onClick: () => onPick(row.name),
+            },
+            h('span', { className: 'gmg-branchitem-name' }, row.name),
+            row.name === current ? h('span', { className: 'gmg-branchcheck' }, h(IconCheck, { size: 12 })) : null,
+          ),
+        ),
+  )
+  if (typeof reactDom?.createPortal !== 'function') return list
+  return reactDom.createPortal(list, document.body)
+}
+
+/**
  * The branch pill, the upstream tracking line, and the fetch/pull/push actions.
  * @param props - `{ status, t, busy }`.
  * @returns the branch bar element.
@@ -487,36 +656,7 @@ function BranchBar(props) {
     h(
       HoverTarget,
       { card: status.branch === null ? null : h(BranchHoverCard, { branch: status.branch, t }) },
-      h(
-        'span',
-        { className: `gmg-branch${status.branch === null ? ' is-detached' : ''}` },
-        h(IconBranch, { size: 13 }),
-        status.branch ?? t('detached'),
-        h(IconChevronDown, { size: 10 }),
-        h(
-          'select',
-          {
-            className: 'gmg-branch-select',
-            value: status.branch ?? '',
-            title: t('switchBranch'),
-            onChange: (event) => {
-              const next = event.target.value
-              if (next !== '' && next !== status.branch) gitStore.switchBranch(next)
-            },
-            style: {
-              position: 'absolute',
-              opacity: 0,
-              width: '100%',
-              height: '100%',
-              inset: 0,
-              cursor: 'pointer',
-              border: 'none',
-            },
-          },
-          status.branch === null ? h('option', { value: '' }, t('detached')) : null,
-          (branches?.branches ?? []).map((branch) => h('option', { key: branch.name, value: branch.name }, branch.name)),
-        ),
-      ),
+      h(BranchPicker, { status, branches, t }),
     ),
     upstream === null
       ? h('span', { className: 'gmg-track' }, t('notPublished'))
