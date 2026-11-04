@@ -87,11 +87,17 @@ function HoverLayer(props) {
     if (element === null) return
     const rect = element.getBoundingClientRect()
     const anchor = props.anchor
-    let left = anchor.left - rect.width - 14
-    if (left < 8) left = Math.min(anchor.right + 14, window.innerWidth - rect.width - 12)
-    const top = Math.max(8, Math.min(anchor.top, window.innerHeight - rect.height - 12))
-    setStyle({ left: Math.max(8, left), top, visibility: 'visible' })
-  }, [props.anchor.left, props.anchor.top, props.anchor.right, props.anchor.bottom, props.children])
+    // Stay inside the column the row lives in: a card that opens over the
+    // conversation hides text the user was reading. Width follows the row, and
+    // the card sits above the row (or below when the row is near the top), so
+    // the row being pointed at stays visible either way.
+    const width = Math.max(240, Math.min(anchor.width ?? rect.width, 420))
+    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 12))
+    const above = anchor.top - rect.height - 8
+    const below = anchor.bottom + 8
+    const top = above >= 8 ? above : Math.max(8, Math.min(below, window.innerHeight - rect.height - 12))
+    setStyle({ left, top, width, visibility: 'visible' })
+  }, [props.anchor.left, props.anchor.top, props.anchor.right, props.anchor.bottom, props.anchor.width, props.children])
   const card = h('div', { ref, className: 'gmg-hover', style }, props.children)
   if (typeof reactDom?.createPortal !== 'function') return card
   return reactDom.createPortal(card, document.body)
@@ -120,8 +126,8 @@ function HoverTarget(props) {
     const box = row?.getBoundingClientRect?.()
     const next =
       box === undefined || box === null
-        ? { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY }
-        : { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
+        ? { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY, width: 320 }
+        : { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width }
     cancel()
     timer.current = window.setTimeout(() => setAnchor(next), props.delay ?? 280)
   }
@@ -174,6 +180,35 @@ function CommitStatZone(props) {
 }
 
 /**
+ * The GitHub account behind one commit, when the panel is authorised.
+ *
+ * Git records whatever name the author configured; the account name is what a
+ * reader recognises. The two can differ (a machine-local user.name versus the
+ * GitHub login), so the card prefers the account and falls back to git.
+ *
+ * @param sha - the commit id.
+ * @returns `{ login, name, avatarUrl }` or null.
+ */
+function useGithubAuthor(sha) {
+  const path = gitStore.get().path
+  const authorized = gitStore.get().github?.authorized === true
+  const [author, setAuthor] = useState(null)
+  useEffect(() => {
+    if (!authorized || path === null) return
+    let live = true
+    fetchDetail(`gh|${path}|${sha}`, 'github', { path, action: 'commit', sha })
+      .then((value) => {
+        if (live) setAuthor(value?.commit ?? null)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [sha, path, authorized])
+  return author
+}
+
+/**
  * The commit card: a tinted head (sha, author, age), the message zone with the
  * subject and its body, and a foot zone carrying the stat line the Source
  * Control view has always used ("N files changed, X insertions(+), Y deletions(-)").
@@ -185,6 +220,7 @@ function CommitHoverCard(props) {
   const { commit, t } = props
   const path = gitStore.get().path
   const { detail, error } = useDetail(path === null ? null : `${path}|${commit.sha}`, 'commitDetail', { path, sha: commit.sha })
+  const account = useGithubAuthor(commit.sha)
   const body = typeof detail?.body === 'string' ? detail.body.trim() : ''
   return h(
     'div',
@@ -193,7 +229,7 @@ function CommitHoverCard(props) {
       'div',
       { className: 'gmg-hoverzone is-head' },
       h('span', { className: 'gmg-sha' }, commit.short),
-      h('span', { className: 'gmg-hoverauthor' }, commit.author),
+      h('span', { className: 'gmg-hoverauthor' }, account?.login ?? commit.author),
       h('span', { className: 'gmg-hoverdot' }, '·'),
       h('span', { className: 'gmg-hoverauthor' }, relativeTime(commit.date, currentLocale())),
     ),

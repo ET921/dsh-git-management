@@ -71,7 +71,7 @@ const LOG = {
  * @param action - the action name.
  * @returns the result the panel should receive.
  */
-function respond(action) {
+function respond(action, params) {
   switch (action) {
     case 'repos':
       return { repos: [{ id: 'w1', title: 'demo', path: 'C:/demo', isRepo: true, root: 'C:/demo', branch: 'main' }], defaultPath: 'C:/demo' }
@@ -84,7 +84,15 @@ function respond(action) {
     case 'diff':
       return { file: 'src/App.tsx', staged: true, patch: 'diff --git a/src/App.tsx b/src/App.tsx\n@@ -1 +1,2 @@\n-old\n+new\n+more', isBinary: false }
     case 'github':
-      return { connected: true, authorized: false, reason: 'no-token', remote: { host: 'github.com', owner: 'acme', repo: 'demo', slug: 'acme/demo', webUrl: 'https://github.com/acme/demo', remoteUrl: 'git@github.com:acme/demo.git' } }
+      if (params?.action === 'commit') return { connected: true, authorized: true, commit: { sha: params.sha, login: 'EvT', name: 'EvT', avatarUrl: null } }
+      if (params?.action === 'pulls') return { connected: true, authorized: true, defaultBranch: 'main', pulls: [] }
+      if (params?.action === 'issues') return { connected: true, authorized: true, issues: [] }
+      return {
+        connected: true,
+        authorized: true,
+        remote: { host: 'github.com', owner: 'acme', repo: 'demo', slug: 'acme/demo', webUrl: 'https://github.com/acme/demo', remoteUrl: 'git@github.com:acme/demo.git' },
+        repo: { fullName: 'acme/demo', description: 'demo', private: true, stars: 0, forks: 0, openIssues: 0, defaultBranch: 'main', htmlUrl: 'https://github.com/acme/demo' },
+      }
     case 'commitDetail':
       return { sha: 'deadbeefdeadbeef', short: 'deadbee', author: 'Ada', date: new Date().toISOString(), subject: 'wire the sidebar panel', body: 'A longer body line.', files: 2, additions: 10, deletions: 3 }
     case 'branchDetail':
@@ -127,7 +135,7 @@ const calls = []
 global.fetch = async (url, init) => {
   const body = JSON.parse(init.body)
   calls.push({ url: String(url), action: body.action })
-  return { ok: true, status: 200, json: async () => ({ ok: true, result: respond(body.action) }) }
+  return { ok: true, status: 200, json: async () => ({ ok: true, result: respond(body.action, body.params) }) }
 }
 
 // ---- load the built bundle ----------------------------------------------
@@ -278,7 +286,7 @@ check('line counts are shown', text().includes('+12') && text().includes('-3'), 
 check('commit button is rendered disabled without a message', container.querySelector('.gmg-btn.is-primary') !== null)
 check('history subject is rendered', text().includes('wire the sidebar panel'), text().slice(0, 600))
 check('github card names the remote', text().includes('acme/demo'), text().slice(0, 600))
-check('token hint is offered when unauthorized', text().includes('个人访问令牌'), text().slice(-400))
+check('the github card lists the pulls tab', text().includes('拉取请求'), text().slice(-400))
 check('no error notice is shown', container.querySelector('.gmg-notice.is-error') === null, container.querySelector('.gmg-notice.is-error')?.textContent)
 
 // The worktree block: both checkouts, the main tag, and the dirty badge.
@@ -376,6 +384,7 @@ if (commitRow !== null) {
   const cardText = card?.textContent ?? ''
   check('resting on a commit floats a card', card !== null, document.body.innerHTML.slice(-200))
   check('the card carries the commit subject', cardText.includes('wire the sidebar panel'), cardText.slice(0, 160))
+  check('the author is the GitHub account, not git user.name', cardText.includes('EvT') && cardText.includes('Ada') === false, cardText.slice(0, 120))
   check('the card renders the commit body', cardText.includes('A longer body line.'), cardText.slice(0, 240))
   check('the card carries the full stat line', /2 個檔案變更，10 行插入\(\+\)，3 行刪除\(-\)/.test(cardText), cardText.slice(0, 240))
   check('the card is split into four zones', card.querySelectorAll('.gmg-hoverzone').length === 4, card.querySelectorAll('.gmg-hoverzone').length)
