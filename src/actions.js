@@ -255,6 +255,10 @@ export function createActions({ git, workspaces }) {
         })
       case 'log':
         return { commits: await git.log(path, Number(params.limit ?? 30)) }
+      case 'commitDetail':
+        return git.commitDetail(path, String(params.sha ?? 'HEAD'))
+      case 'branchDetail':
+        return git.branchDetail(path, String(params.branch ?? ''))
       case 'branches':
         return git.branches(path)
       case 'switch':

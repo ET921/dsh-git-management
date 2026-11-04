@@ -1,11 +1,10 @@
 /**
- * Plugin wiring: dictionaries, styles, the sidebar cell, and the `main` panel.
+ * Plugin wiring: dictionaries, styles, and the right-column tab.
  *
- * The sidebar cell is a `sidebar.panellist` row; the owner draws the button and
- * selects the `main` panel whose key matches the row's id, which is the same
- * contract the host's own Plugins row and the community market use. One id
- * (`git-management`) therefore addresses both seats and no navigation code is
- * needed here.
+ * One seat: `sidebarRightTabs.register` declares the type (and the start-page
+ * card), and two slots keyed by that id supply the tab body and its chip. The
+ * body itself swaps between the change list and a file's diff, so opening a
+ * diff never covers the conversation column.
  */
 
 /** Dictionary namespace for this plugin's copy. */
@@ -16,6 +15,12 @@ const TAB_ID = 'dsh-git-management'
 
 /** The tab kind, i.e. what the column records for `openTab(kind)`. */
 const TAB_KIND = 'git'
+
+/** The second tab type: one file's diff, opened beside the change list. */
+const DIFF_TAB_ID = 'dsh-git-diff'
+
+/** The diff tab's kind, as `sidebarRight.openTab` names it. */
+const DIFF_TAB_KIND = 'git-diff'
 
 /** Chinese copy (the GUI's default language on this machine). */
 const zh = {
@@ -111,6 +116,23 @@ const zh = {
   worktreeRemoveConfirm: '移除工作樹 {path}？裡面未提交的內容會一併消失。',
   worktreeNone: '目前只有這一個工作樹。',
   worktreeStale: '宿主端還是舊版（沒有工作樹 API）。關視窗不會結束背景程序——請從選單或托盤「完全結束」DSH Desktop 再開。',
+  openDiffHint: '開啟這個檔案的差異',
+  diffBack: '返回',
+  diffBackHint: '關閉差異檢視（Esc）',
+  diffPrev: '上一個檔案',
+  diffNext: '下一個檔案',
+  diffSplit: '並排',
+  diffUnified: '統一',
+  diffShowStaged: '看已暫存',
+  diffShowWorktree: '看工作區',
+  diffStagedBadge: '已暫存',
+  diffWorktreeBadge: '未暫存',
+  diffNothingOpen: '從右側的變更清單點一個檔案。',
+  diffTabTitle: '檔案差異',
+  hoverLoading: '讀取中…',
+  hoverFiles: '個檔案',
+  hoverOpenOnGithub: '在 GitHub 開啟這個提交',
+  hoverNoBranch: '這個分支還沒有提交。',
 }
 
 /** English copy. */
@@ -207,16 +229,97 @@ const en = {
   worktreeRemoveConfirm: 'Remove worktree {path}? Uncommitted work inside it is lost.',
   worktreeNone: 'This is the only worktree.',
   worktreeStale: 'The host is still the older build (no worktree API). Closing the window keeps the background process alive — fully quit DSH Desktop and relaunch.',
+  openDiffHint: 'Open this file’s diff',
+  diffBack: 'Back',
+  diffBackHint: 'Close the diff view (Esc)',
+  diffPrev: 'Previous file',
+  diffNext: 'Next file',
+  diffSplit: 'Split',
+  diffUnified: 'Unified',
+  diffShowStaged: 'Show staged',
+  diffShowWorktree: 'Show working tree',
+  diffStagedBadge: 'staged',
+  diffWorktreeBadge: 'working tree',
+  diffNothingOpen: 'Pick a file in the change list on the right.',
+  diffTabTitle: 'File diff',
+  hoverLoading: 'Reading…',
+  hoverFiles: 'files',
+  hoverOpenOnGithub: 'Open this commit on GitHub',
+  hoverNoBranch: 'This branch has no commits yet.',
 }
 
 /**
- * The tab body: the panel inside the crash boundary, told it lives in a
- * ~320–420px column rather than a page.
+ * The diff tab's body.
+ *
+ * The file to show arrives as the tab's navigation parameters — `openTab(kind,
+ * { params })` records them, and `useTabNavigation` is this seat's hook onto
+ * that record, so re-opening the tab for another file only bumps `revision`.
+ *
+ * @param props - session-scoped slot props plus `useTabNavigation` and `t`.
+ * @returns the boundary element wrapping the diff.
+ */
+function DiffTabBody(props) {
+  const useNavigation = typeof props.useTabNavigation === 'function' ? props.useTabNavigation : () => null
+  const navigation = useNavigation((snapshot) => snapshot)
+  const params = navigation?.params ?? null
+  const revision = navigation?.revision ?? 0
+
+  useEffect(() => {
+    if (params !== null && typeof params.file === 'string' && typeof params.path === 'string') openDiff(params)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the revision is the
+    // signal that the opener asked for this file, even when it is the same one.
+  }, [revision])
+
+  const close = () => {
+    const actions = props.actions
+    if (actions !== undefined && typeof actions.close === 'function') actions.close()
+    else closeDiff()
+  }
+
+  return h(PanelBoundary, { ...props, compact: true, seat: 'diff', onClose: close })
+}
+
+/**
+ * The diff tab's chip: the file name, so a strip of tabs says which is which.
+ * @param props - slot props plus `useTabNavigation` and `t`.
+ * @returns the title element.
+ */
+function DiffTabTitle(props) {
+  const useNavigation = typeof props.useTabNavigation === 'function' ? props.useTabNavigation : () => null
+  const navigation = useNavigation((snapshot) => snapshot)
+  const params = navigation?.params ?? null
+  const t = typeof props?.t === 'function' ? props.t : tr
+  const file = typeof params?.file === 'string' ? params.file : t('diffTabTitle')
+  const slash = file.lastIndexOf('/')
+  return h(
+    'span',
+    { className: 'gmg-difftabtitle' },
+    h(IconChevronRight, { size: 11 }),
+    h('span', { className: 'gmg-difftabname', title: file }, slash === -1 ? file : file.slice(slash + 1)),
+    params?.staged === true ? h('span', { className: 'gmg-gh-label' }, t('diffStagedBadge')) : null,
+  )
+}
+
+/**
+ * The tab body: either the change list or, when the seat says so, the diff.
+ *
+ * Both live in the same column; the diff is a tab of its own so opening one
+ * leaves the change list — and the conversation — exactly where they were.
+ *
  * @param props - session-scoped slot props.
  * @returns the panel element.
  */
+function GitTabShell(props) {
+  return props.seat === 'diff' ? h(DiffPanel, props) : h(GitPanel, props)
+}
+
+/**
+ * The tab body wrapped in the crash boundary, told it lives in a narrow column.
+ * @param props - session-scoped slot props.
+ * @returns the boundary element.
+ */
 function GitTabBody(props) {
-  return h(PanelBoundary, { ...props, compact: true })
+  return h(PanelBoundary, { ...props, compact: true, seat: 'list' })
 }
 
 /**
@@ -267,7 +370,7 @@ class PanelBoundary extends react.Component {
         ),
       )
     }
-    return h(GitPanel, this.props)
+    return h(GitTabShell, this.props)
   }
 }
 
@@ -345,9 +448,63 @@ exports.apply = function apply(ctx) {
         ),
       )
 
-      console.log('[dsh-git-management] source control tab registered (sidebar.right.pane.tab)')
+      // The second type: one file's diff as its own tab. No guide entry — this
+      // tab is only ever reached from a row in the list, never from the start
+      // page, and `multiple: false` makes a second click re-navigate the same
+      // tab instead of piling up one tab per file.
+      scoped.effect(
+        () =>
+          scoped.sidebarRightTabs.register({
+            id: DIFF_TAB_ID,
+            kind: DIFF_TAB_KIND,
+            priority: 'extension',
+            title: () => t('diffTabTitle'),
+            guide: [],
+          }),
+        'dsh-git-management: diff tab type',
+      )
+
+      scoped.slots.inject('sidebar.right.pane.tab', () =>
+        scoped.slots.register(
+          {
+            name: 'sidebar.right.pane.tab',
+            key: DIFF_TAB_ID,
+            locale: NS,
+            inject: () => ({ t }),
+          },
+          DiffTabBody,
+        ),
+      )
+
+      scoped.slots.inject('sidebar.right.pane.tab.title', () =>
+        scoped.slots.register(
+          {
+            name: 'sidebar.right.pane.tab.title',
+            key: DIFF_TAB_ID,
+            locale: NS,
+            inject: () => ({ t }),
+          },
+          DiffTabTitle,
+        ),
+      )
+
+      console.log('[dsh-git-management] tabs registered (source control + file diff)')
     } catch (error) {
       console.error('[dsh-git-management] mount failed:', error)
+    }
+  })
+
+  // Opening a file's diff is a tab open in the same column: the change list and
+  // the conversation both stay exactly where the user left them.
+  ctx.inject(['sidebarRight'], (scoped) => {
+    gmgSidebarBridge = {
+      openDiff: (params) => {
+        try {
+          scoped.sidebarRight.openTab(DIFF_TAB_KIND, { params })
+        } catch (error) {
+          console.error('[dsh-git-management] could not open the diff tab:', error)
+        }
+      },
     }
   })
 

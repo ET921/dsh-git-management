@@ -41,7 +41,8 @@
 - **分支列**：目前分支（點擊可切換）、上游、`↑ahead ↓behind`、Fetch／Pull（`--ff-only`）／Push（首次自動 `-u origin`）、新建分支。
 - **提交框**：訊息、`Ctrl+Enter` 提交、全部暫存、amend、已暫存/未暫存計數。
 - **變更清單**：已暫存 / 更改 / 衝突三組，逐檔 `+12 -3`，hover 出現暫存、取消暫存、放棄、刪除未追蹤檔（有確認）。
-- **行內差異**：點檔案展開 unified diff，`+`/`-`/hunk 上色。
+- **點檔案 → 在側邊欄新開一個「檔案差異」分頁**：變更清單與對話都留在原位，diff 自己是一個分頁（晶片顯示檔名）：雙欄行號、統一／並排切換、上一個／下一個檔案、已暫存⇄工作區切換、`Esc`／返回關閉分頁。
+- **hover 詳情卡**：滑鼠停在提交上顯示 sha、作者、相對時間、訊息、`N 個檔案 +X −Y` 與「在 GitHub 開啟」；停在分支上顯示上游、領先/落後與最後一次提交。卡片開在欄的**左側**（不會壓住你正在指的那一行），停留約 280ms 才出現，且不可點，不影響原本的點擊行為。
 - **歷史**：最近提交（sha、主旨、作者、相對時間），可展開全部。
 - **GitHub**：遠端解析（ssh/https 皆可）、星標/復刻/issue 數、在瀏覽器開啟、PR 清單、Issue 清單、從目前分支建立 PR。
 - **工作樹**：列出這份 repo 的所有 checkout（含 DSH 自己的 `.agents/worktrees/*` 與你手動加的），每列顯示分支、相對路徑、髒污計數與 `主` 標記；可以一鍵把面板切過去、開成 DSH 工作區、或在確認後移除。見 [docs/worktrees.md](docs/worktrees.md)。
@@ -88,8 +89,8 @@ C:\Users\user\AppData\Roaming\dsh-desktop\harness\profiles\web\
 
 ```bash
 npm run build        # 產出 lib/
-npm run verify       # 59 項：Git 引擎 + 動作表（含 worktree add/list/remove/prune）+ 打包檢查
-npm run test:render  # 33 項：jsdom + 真的 React，把 lib/client.js 掛起來渲染面板
+npm run verify       # 65 項：Git 引擎 + 動作表（含 worktree、commit/branch 詳情）+ 打包檢查
+npm run test:render  # 45 項：jsdom + 真的 React，掛起 lib/client.js 渲染面板與 diff 面板
 ```
 
 - `scripts/verify.mjs`：對真的 `git` 二進位驗證 status/stage/commit/diff/log/branches/remote 與錯誤處理，含路徑有空白的檔案。
@@ -103,12 +104,15 @@ src/
   actions.js        動作表：action 名稱 → argv／GitHub REST，唯一的命令組裝處
   git.js            Git 引擎（可注入 exec，無 DSH 依賴）＋ status/diff 解析
   client/
-    00-util.js      React、host 呼叫、格式化
+    00-util.js      React、host 呼叫、格式化、layout/workspace 橋
     10-store.js     面板狀態（跨掛載保存）與所有操作
+    15-diff.js      中央 diff 的目標狀態＋patch 解析（行號、並排配對）
     20-icons.js     手繪 SVG 圖示
     30-style.js     主題 token 驅動的 CSS
-    40-panel.js     面板 UI（分支列、提交框、檔案列、diff、歷史、GitHub；`compact` 為右欄窄版）
-    50-plugin.js    字典 + 分頁型別（`sidebarRightTabs`）與兩個 slot 註冊
+    40-panel.js     面板 UI（分支列、提交框、檔案列、工作樹、歷史、GitHub；`compact` 為右欄窄版）
+    45-diff-panel.js 中央欄的 diff 面板（統一／並排、上一個／下一個）
+    46-hover.js     提交／分支的 hover 詳情卡（portal、延遲、快取）
+    50-plugin.js    字典 + 分頁型別（`sidebarRightTabs`）+ `main` diff 面板的 slot 註冊
 scripts/
   build.mjs         無 bundler：ESM 直送 + ModuleLoader 包裝
   verify.mjs        Git 引擎驗證

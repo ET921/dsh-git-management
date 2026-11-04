@@ -255,6 +255,61 @@ const PANEL_CSS = `
 .gmg-wt .gmg-actions { opacity: 0; }
 .gmg-wt:hover .gmg-actions, .gmg-wt:focus-within .gmg-actions { opacity: 1; }
 
+/* ---- the centre-column diff ---- */
+.gmg-difftabtitle { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.gmg-difftabname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmg-diffpanel { display: flex; flex-direction: column; height: 100%; background: var(--dsw-alias-bg-base); overflow: hidden; }
+.gmg-diffhead {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+  flex: none;
+}
+.gmg-diffpath { font-family: var(--gmg-mono); font-size: 12.5px; max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmg-diffscroll { flex: 1; overflow: auto; }
+.gmg-diffbody { font-family: var(--gmg-mono); font-size: 12px; line-height: 1.6; min-width: max-content; padding-bottom: 40px; }
+.gmg-diffrow { display: grid; grid-template-columns: 54px 54px 1fr; align-items: start; }
+.gmg-diffrow.is-add { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent); }
+.gmg-diffrow.is-del { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent); }
+.gmg-diffrow.is-hunk { background: var(--dsw-alias-bg-layer-2); }
+.gmg-diff-no {
+  color: var(--dsw-alias-label-secondary); opacity: .75;
+  text-align: right; padding: 0 8px 0 2px;
+  font-size: 11px; user-select: none;
+  border-right: 1px solid var(--dsw-alias-border-l1);
+  white-space: nowrap;
+}
+.gmg-diff-cell { padding: 0 12px; white-space: pre; color: var(--dsw-alias-label-primary); }
+.gmg-diff-cell.is-add { color: var(--dsw-alias-state-success-primary); }
+.gmg-diff-cell.is-del { color: var(--dsw-alias-state-error-primary); }
+.gmg-diff-cell.is-hunk { grid-column: 1 / -1; color: var(--dsw-alias-brand-primary); padding: 3px 12px; font-size: 11px; }
+.gmg-diff-cell.is-meta { grid-column: 1 / -1; color: var(--dsw-alias-label-secondary); opacity: .7; }
+.gmg-diffbody.is-split .gmg-diffrow.is-splitrow { grid-template-columns: 54px 1fr 54px 1fr; }
+.gmg-diffbody.is-split .gmg-diff-cell.is-blank { background: var(--dsw-alias-bg-layer-1); }
+.gmg-diffbody.is-split .gmg-diff-cell.is-hunk { grid-column: 1 / -1; }
+
+/* ---- hover cards ---- */
+.gmg-hovertarget { display: contents; }
+.gmg-hover {
+  position: fixed; z-index: 4000;
+  max-width: 380px; min-width: 240px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-overlay);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, .38);
+  font-size: 12px;
+  pointer-events: none;
+}
+.gmg-hovercard { display: flex; flex-direction: column; gap: 6px; }
+.gmg-hoverhead { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-secondary); min-width: 0; }
+.gmg-hoverauthor { font-family: var(--gmg-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmg-hoversubject { font-weight: 600; font-size: 12.5px; line-height: 1.4; }
+.gmg-hoverbody { color: var(--dsw-alias-label-secondary); white-space: pre-wrap; max-height: 132px; overflow: hidden; font-size: 11.5px; line-height: 1.5; }
+.gmg-hoverstats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--dsw-alias-label-secondary); font-size: 11.5px; }
+.gmg-hoverfoot { display: flex; align-items: center; gap: 5px; color: var(--dsw-alias-brand-primary); font-size: 11.5px; }
+
 /* ---- the right-sidebar tab: a ~320-420px column, not a page ---- */
 .gmg-root.is-compact .gmg-page { max-width: none; padding: 8px 8px 28px; gap: 8px; }
 .gmg-root.is-compact .gmg-head { gap: 8px; align-items: center; padding: 2px 2px 0; }
@@ -280,6 +335,13 @@ const PANEL_CSS = `
 .gmg-root.is-compact .gmg-wt { padding: 5px 6px 5px 8px; gap: 5px; }
 .gmg-root.is-compact .gmg-wt-path { display: none; }
 .gmg-root.is-compact .gmg-meta { display: none; }
+.gmg-root.is-compact .gmg-diffhead { padding: 8px; gap: 6px; }
+.gmg-root.is-compact .gmg-diffpath { max-width: 100%; flex: 1; }
+.gmg-root.is-compact .gmg-diffbody { font-size: 11.5px; }
+.gmg-root.is-compact .gmg-diffrow { grid-template-columns: 40px 40px 1fr; }
+.gmg-root.is-compact .gmg-diffbody.is-split .gmg-diffrow.is-splitrow { grid-template-columns: 40px 1fr 40px 1fr; }
+.gmg-root.is-compact .gmg-diff-no { padding: 0 5px 0 1px; }
+.gmg-root.is-compact .gmg-diff-cell { padding: 0 8px; }
 `
 
 /**

@@ -241,11 +241,15 @@ function GitPanel(props) {
             ? h('div', { className: 'gmg-empty' }, t('noCommits'))
             : state.log.slice(0, showAllHistory ? state.log.length : 6).map((commit) =>
                 h(
-                  'div',
-                  { className: 'gmg-commit-row', key: commit.sha, title: `${commit.sha}\n${commit.author} <${commit.email}>` },
-                  h('span', { className: 'gmg-sha' }, commit.short),
-                  h('span', { className: 'gmg-subject' }, commit.subject),
-                  h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),
+                  HoverTarget,
+                  { key: commit.sha, card: h(CommitHoverCard, { commit, t }) },
+                  h(
+                    'div',
+                    { className: 'gmg-commit-row' },
+                    h('span', { className: 'gmg-sha' }, commit.short),
+                    h('span', { className: 'gmg-subject' }, commit.subject),
+                    h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),
+                  ),
                 ),
               ),
         ),
@@ -481,33 +485,37 @@ function BranchBar(props) {
     'div',
     { className: 'gmg-branchbar' },
     h(
-      'span',
-      { className: `gmg-branch${status.branch === null ? ' is-detached' : ''}`, title: t('branch') },
-      h(IconBranch, { size: 13 }),
-      status.branch ?? t('detached'),
-      h(IconChevronDown, { size: 10 }),
+      HoverTarget,
+      { card: status.branch === null ? null : h(BranchHoverCard, { branch: status.branch, t }) },
       h(
-        'select',
-        {
-          className: 'gmg-branch-select',
-          value: status.branch ?? '',
-          title: t('switchBranch'),
-          onChange: (event) => {
-            const next = event.target.value
-            if (next !== '' && next !== status.branch) gitStore.switchBranch(next)
+        'span',
+        { className: `gmg-branch${status.branch === null ? ' is-detached' : ''}` },
+        h(IconBranch, { size: 13 }),
+        status.branch ?? t('detached'),
+        h(IconChevronDown, { size: 10 }),
+        h(
+          'select',
+          {
+            className: 'gmg-branch-select',
+            value: status.branch ?? '',
+            title: t('switchBranch'),
+            onChange: (event) => {
+              const next = event.target.value
+              if (next !== '' && next !== status.branch) gitStore.switchBranch(next)
+            },
+            style: {
+              position: 'absolute',
+              opacity: 0,
+              width: '100%',
+              height: '100%',
+              inset: 0,
+              cursor: 'pointer',
+              border: 'none',
+            },
           },
-          style: {
-            position: 'absolute',
-            opacity: 0,
-            width: '100%',
-            height: '100%',
-            inset: 0,
-            cursor: 'pointer',
-            border: 'none',
-          },
-        },
-        status.branch === null ? h('option', { value: '' }, t('detached')) : null,
-        (branches?.branches ?? []).map((branch) => h('option', { key: branch.name, value: branch.name }, branch.name)),
+          status.branch === null ? h('option', { value: '' }, t('detached')) : null,
+          (branches?.branches ?? []).map((branch) => h('option', { key: branch.name, value: branch.name }, branch.name)),
+        ),
       ),
     ),
     upstream === null
@@ -728,18 +736,20 @@ function ChangeGroup(props) {
 }
 
 /**
- * One changed file, with its inline diff when open.
+ * One changed file. Clicking it opens that file's diff in the centre column.
  * @param props - `{ row, staged, t, conflicts }`.
  * @returns the row element.
  */
 function FileRow(props) {
   const { row, staged, t, conflicts } = props
   const state = useGitStore()
-  const open = state.expanded[row.path] === (staged ? 'staged' : 'worktree')
-  const diffKey = `${staged ? 's' : 'w'}:${row.path}`
-  const diff = state.diffs[diffKey]
   const { name, dir } = splitPath(row.path)
   const untracked = row.kind === 'untracked'
+  const openThis = () => {
+    if (typeof gmgSidebarBridge.openDiff === 'function') {
+      gmgSidebarBridge.openDiff({ path: state.path, file: row.path, staged, status: row.status })
+    }
+  }
 
   const discard = () => {
     const message = untracked ? t('deleteConfirm', { file: row.path }) : t('discardConfirm', { file: row.path })
@@ -807,19 +817,19 @@ function FileRow(props) {
     h(
       'div',
       {
-        className: `gmg-file${open ? ' is-open' : ''}`,
+        className: 'gmg-file',
         role: 'button',
         tabIndex: 0,
-        title: row.path,
-        onClick: () => gitStore.toggleFile(row.path, staged),
+        title: `${row.path} — ${t('openDiffHint')}`,
+        onClick: openThis,
         onKeyDown: (event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
-            gitStore.toggleFile(row.path, staged)
+            openThis()
           }
         },
       },
-      h('span', { className: 'gmg-file-chevron' }, open ? h(IconChevronDown, { size: 11 }) : h(IconChevronRight, { size: 11 })),
+      h('span', { className: 'gmg-file-chevron' }, h(IconChevronRight, { size: 11 })),
       h('span', { className: 'gmg-status', style: { color: statusColor(row.status) }, title: t('status') }, statusGlyph(row.status)),
       h(
         'span',
@@ -831,53 +841,7 @@ function FileRow(props) {
       row.deletions > 0 ? h('span', { className: 'gmg-del-count gmg-stats' }, `-${row.deletions}`) : null,
       h('span', { className: 'gmg-actions' }, ...actions),
     ),
-    open ? h(DiffView, { diff, t }) : null,
   )
-}
-
-/**
- * One unified diff, coloured line by line.
- * @param props - `{ diff, t }`.
- * @returns the diff element or null.
- */
-function DiffView(props) {
-  const { diff, t } = props
-  if (diff === undefined) return null
-  if (diff.loading) return h('div', { className: 'gmg-diff' }, h('div', { className: 'gmg-diff-note' }, t('loadingDiff')))
-  if (diff.error !== undefined) return h('div', { className: 'gmg-diff' }, h('div', { className: 'gmg-diff-note' }, diff.error))
-  if (diff.binary) return h('div', { className: 'gmg-diff' }, h('div', { className: 'gmg-diff-note' }, t('binaryDiff')))
-  const patch = String(diff.patch ?? '')
-  if (patch.trim() === '') return h('div', { className: 'gmg-diff' }, h('div', { className: 'gmg-diff-note' }, t('emptyDiff')))
-
-  const lines = patch.split('\n')
-  return h(
-    'div',
-    { className: 'gmg-diff' },
-    h(
-      'pre',
-      null,
-      lines.map((line, index) =>
-        h(
-          'span',
-          { key: index, className: `gmg-diff-line ${diffClass(line)}` },
-          line === '' ? ' ' : line,
-        ),
-      ),
-    ),
-  )
-}
-
-/**
- * Classify one patch line.
- * @param line - the raw line.
- * @returns the CSS modifier for the line.
- */
-function diffClass(line) {
-  if (line.startsWith('@@')) return 'is-hunk'
-  if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file') || line.startsWith('similarity') || line.startsWith('rename')) return 'is-meta'
-  if (line.startsWith('+')) return 'is-add'
-  if (line.startsWith('-')) return 'is-del'
-  return ''
 }
 
 /**

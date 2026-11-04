@@ -1,0 +1,199 @@
+/**
+ * Hover cards for the history rows and the branch pill.
+ *
+ * Cursor answers a hover on a commit with the commit itself — author, time,
+ * message, the stat line, and a way to open it on GitHub — and a hover on a
+ * branch with where that branch is. Both are read-only enlargements of a row
+ * that is already on screen: nothing happens until the pointer rests for a
+ * moment, and the card cannot be clicked into a trap, so the row's own click
+ * behaviour is untouched.
+ *
+ * Details are fetched once per sha/branch and cached for the session; the row's
+ * own fields render immediately, so the card never appears empty.
+ */
+
+/** Details already fetched, keyed `path|sha` and `path|branch`. */
+const gmgDetailCache = new Map()
+
+/**
+ * Read one cached detail.
+ * @param key - the cache key.
+ * @returns the cached value or undefined.
+ */
+function cachedDetail(key) {
+  return gmgDetailCache.get(key)
+}
+
+/**
+ * Fetch and cache one detail.
+ * @param key - the cache key.
+ * @param action - host action name.
+ * @param params - action parameters.
+ * @returns the detail.
+ */
+async function fetchDetail(key, action, params) {
+  if (gmgDetailCache.has(key)) return gmgDetailCache.get(key)
+  const result = await callHost(action, params)
+  gmgDetailCache.set(key, result)
+  return result
+}
+
+/**
+ * Async detail for a commit or branch, shared by the cards.
+ * @param key - cache key, or null while the card has no target.
+ * @param action - host action.
+ * @param params - action parameters.
+ * @returns `{ detail, error }`.
+ */
+function useDetail(key, action, params) {
+  const [detail, setDetail] = useState(() => (key === null ? null : cachedDetail(key) ?? null))
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    if (key === null) return
+    const cached = cachedDetail(key)
+    if (cached !== undefined) {
+      setDetail(cached)
+      return
+    }
+    let live = true
+    fetchDetail(key, action, params)
+      .then((value) => {
+        if (live) setDetail(value)
+      })
+      .catch((failure) => {
+        if (live) setError(String(failure?.message ?? failure))
+      })
+    return () => {
+      live = false
+    }
+  }, [key])
+  return { detail, error }
+}
+
+/**
+ * The floating layer: anchored beside the hovered row, never on top of it.
+ *
+ * The right column hugs the window edge, so the card opens to its left; only a
+ * window too narrow for that falls back to the row's right side.
+ *
+ * @param props - `{ anchor, children }`, where anchor is a DOMRect-like box.
+ * @returns the card, portalled when the module table allows it.
+ */
+function HoverLayer(props) {
+  const ref = useRef(null)
+  const [style, setStyle] = useState({ left: -9999, top: 0, visibility: 'hidden' })
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (element === null) return
+    const rect = element.getBoundingClientRect()
+    const anchor = props.anchor
+    let left = anchor.left - rect.width - 14
+    if (left < 8) left = Math.min(anchor.right + 14, window.innerWidth - rect.width - 12)
+    const top = Math.max(8, Math.min(anchor.top, window.innerHeight - rect.height - 12))
+    setStyle({ left: Math.max(8, left), top, visibility: 'visible' })
+  }, [props.anchor.left, props.anchor.top, props.anchor.right, props.anchor.bottom, props.children])
+  const card = h('div', { ref, className: 'gmg-hover', style }, props.children)
+  if (typeof reactDom?.createPortal !== 'function') return card
+  return reactDom.createPortal(card, document.body)
+}
+
+/** The row whose box a hover card should sit beside. */
+const HOVER_ROW_SELECTOR = '.gmg-commit-row, .gmg-branch'
+
+/**
+ * Wrap a row so that resting the pointer on it enlarges it.
+ * @param props - `{ card, delay, children }`; `card` is the element to float.
+ * @returns the wrapper element.
+ */
+function HoverTarget(props) {
+  const [anchor, setAnchor] = useState(null)
+  const timer = useRef(undefined)
+  const cancel = () => {
+    if (timer.current !== undefined) {
+      window.clearTimeout(timer.current)
+      timer.current = undefined
+    }
+  }
+  const enter = (event) => {
+    const target = event.target
+    const row = typeof target?.closest === 'function' ? target.closest(HOVER_ROW_SELECTOR) : null
+    const box = row?.getBoundingClientRect?.()
+    const next =
+      box === undefined || box === null
+        ? { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY }
+        : { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
+    cancel()
+    timer.current = window.setTimeout(() => setAnchor(next), props.delay ?? 280)
+  }
+  const leave = () => {
+    cancel()
+    setAnchor(null)
+  }
+  useEffect(() => cancel, [])
+  return h(
+    'div',
+    { className: 'gmg-hovertarget', onMouseEnter: enter, onMouseLeave: leave, onMouseDown: leave },
+    props.children,
+    anchor === null ? null : h(HoverLayer, { anchor }, props.card),
+  )
+}
+
+/**
+ * The commit card.
+ * @param props - `{ commit, t }`.
+ * @returns the card contents.
+ */
+function CommitHoverCard(props) {
+  const { commit, t } = props
+  const path = gitStore.get().path
+  const { detail, error } = useDetail(path === null ? null : `${path}|${commit.sha}`, 'commitDetail', { path, sha: commit.sha })
+  const remote = gitStore.get().github?.remote
+  const url = remote?.webUrl ? `${remote.webUrl}/commit/${commit.sha}` : null
+  return h(
+    'div',
+    { className: 'gmg-hovercard' },
+    h('div', { className: 'gmg-hoverhead' }, h('span', { className: 'gmg-sha' }, commit.short), h('span', { className: 'gmg-hoverauthor' }, `${commit.author} · ${relativeTime(commit.date, currentLocale())}`)),
+    h('div', { className: 'gmg-hoversubject' }, commit.subject),
+    detail?.body ? h('div', { className: 'gmg-hoverbody' }, detail.body.slice(0, 400)) : null,
+    detail !== null
+      ? h(
+          'div',
+          { className: 'gmg-hoverstats' },
+          `${detail.files} ${t('hoverFiles')} · `,
+          h('span', { className: 'gmg-add-count' }, `+${detail.additions}`),
+          ' ',
+          h('span', { className: 'gmg-del-count' }, `-${detail.deletions}`),
+        )
+      : error === null
+        ? h('div', { className: 'gmg-hoverstats' }, t('hoverLoading'))
+        : null,
+    url === null ? null : h('div', { className: 'gmg-hoverfoot' }, h(IconGithub, { size: 12 }), t('hoverOpenOnGithub')),
+  )
+}
+
+/**
+ * The branch card.
+ * @param props - `{ branch, t }`.
+ * @returns the card contents.
+ */
+function BranchHoverCard(props) {
+  const { branch, t } = props
+  const path = gitStore.get().path
+  const { detail } = useDetail(path === null ? null : `${path}|branch:${branch}`, 'branchDetail', { path, branch })
+  if (detail === null) {
+    // Either still reading, or a host that predates the action: the branch name
+    // is already known, so the card is useful either way.
+    return h('div', { className: 'gmg-hovercard' }, h('div', { className: 'gmg-hoverhead' }, h(IconBranch, { size: 12 }), h('span', { className: 'gmg-hoversubject' }, branch)))
+  }
+  if (detail.exists === false) {
+    return h('div', { className: 'gmg-hovercard' }, h('div', { className: 'gmg-hoverhead' }, branch), h('div', { className: 'gmg-hoverstats' }, t('hoverNoBranch')))
+  }
+  return h(
+    'div',
+    { className: 'gmg-hovercard' },
+    h('div', { className: 'gmg-hoverhead' }, h(IconBranch, { size: 12 }), h('span', { className: 'gmg-hoversubject' }, branch), h('span', { className: 'gmg-sha' }, detail.short)),
+    h('div', { className: 'gmg-hoverstats' }, detail.upstream === null ? t('notPublished') : `${detail.upstream}${detail.track ? ` ${detail.track}` : ''}`),
+    h('div', { className: 'gmg-hoverbody' }, detail.subject),
+    h('div', { className: 'gmg-hoverstats' }, `${detail.author} · ${relativeTime(detail.date, currentLocale())}`),
+  )
+}

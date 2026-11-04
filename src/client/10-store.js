@@ -42,10 +42,6 @@ function initialState() {
     error: null,
     /** Last success, shown as one dismissible line. */
     notice: null,
-    /** Expanded file paths (diff open). */
-    expanded: {},
-    /** Diff payloads keyed `s:<path>` (staged) or `w:<path>` (worktree). */
-    diffs: {},
     /** Draft commit message. */
     message: '',
     /** Commit staging preferences. */
@@ -138,8 +134,6 @@ function createGitStore() {
       worktreeError: null,
       worktreeStale: false,
       github: null,
-      expanded: {},
-      diffs: {},
       error: null,
       notice: null,
     })
@@ -161,9 +155,6 @@ function createGitStore() {
     })
     if (snapshot === undefined || mine !== epoch) return
     set({ status: snapshot.status, log: snapshot.log })
-    // A refresh is the moment stale diff panes should be re-read, not cleared.
-    const open = Object.keys(state.expanded)
-    if (open.length > 0) await Promise.all(open.map((file) => loadDiff(file, state.expanded[file] === 'staged')))
   }
 
   /**
@@ -262,41 +253,6 @@ function createGitStore() {
   }
 
   /**
-   * Read one file's patch and keep it open.
-   * @param file - repository-relative path.
-   * @param staged - read the staged side.
-   */
-  async function loadDiff(file, staged) {
-    const path = state.path
-    if (path === null) return
-    const key = `${staged ? 's' : 'w'}:${file}`
-    set({ diffs: { ...state.diffs, [key]: { loading: true } } })
-    try {
-      const result = await callHost('diff', { path, file, staged })
-      set({ diffs: { ...state.diffs, [key]: { loading: false, patch: result?.patch ?? '', binary: Boolean(result?.isBinary) } } })
-    } catch (error) {
-      set({ diffs: { ...state.diffs, [key]: { loading: false, error: String(error?.message ?? error) } } })
-    }
-  }
-
-  /**
-   * Open or close one file's diff.
-   * @param file - repository-relative path.
-   * @param staged - which side the row belongs to.
-   */
-  async function toggleFile(file, staged) {
-    const next = { ...state.expanded }
-    if (next[file] === (staged ? 'staged' : 'worktree')) {
-      delete next[file]
-      set({ expanded: next })
-      return
-    }
-    next[file] = staged ? 'staged' : 'worktree'
-    set({ expanded: next })
-    await loadDiff(file, staged)
-  }
-
-  /**
    * One file operation (`stage`, `unstage`, `discard`, `deleteUntracked`).
    * @param action - the host action.
    * @param files - repository-relative paths.
@@ -337,7 +293,7 @@ function createGitStore() {
       callHost('commit', { path: state.path, message, amend: state.amend, stageAll: state.stageAll }),
     )
     if (done === undefined) return false
-    set({ message: '', amend: false, notice: done.summary || 'committed', expanded: {}, diffs: {} })
+    set({ message: '', amend: false, notice: done.summary || 'committed' })
     await refresh()
     return true
   }
@@ -448,7 +404,6 @@ function createGitStore() {
     pruneWorktrees,
     focusWorktree,
     openWorktreeInDsh,
-    toggleFile,
     fileAction,
     stageAll,
     unstageAll,

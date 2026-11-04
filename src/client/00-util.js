@@ -9,10 +9,25 @@
 /** React, from the shell's module table. */
 const react = require('react')
 
+/**
+ * Portals, when the shell's module table exposes `react-dom`.
+ *
+ * It is part of this build's frozen table, but the whole bundle dies if one
+ * `require` throws, so a host that does not expose it simply renders the hover
+ * card in place (fixed positioning needs no portal to be correct).
+ */
+const reactDom = (() => {
+  try {
+    return require('react-dom')
+  } catch {
+    return null
+  }
+})()
+
 /** Terse hyperscript; this file set is JSX-free so the build needs no compiler. */
 const h = react.createElement
 
-const { useCallback, useEffect, useMemo, useRef, useState } = react
+const { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } = react
 
 /** Module id: the bundle's id and (by the plugin's own choice) its tab id. */
 const PLUGIN_ID = 'dsh-git-management'
@@ -148,6 +163,12 @@ function pathKey(path) {
  * instead of receiving services as props.
  */
 let gmgWorkspaceBridge = null
+
+/**
+ * The right column's tab opener, installed by the plugin. Clicking a file opens
+ * a diff tab in the same column, so the list and the conversation stay put.
+ */
+let gmgSidebarBridge = { openDiff: null }
 
 /**
  * Whether this GUI can open a directory as a workspace.

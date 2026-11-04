@@ -561,6 +561,73 @@ export function createGit(exec) {
     return { summary: firstLine(result.stdout) || firstLine(result.stderr) || 'pruned' }
   }
 
+  /**
+   * Everything a commit hover card shows, in two calls.
+   *
+   * `git show -s` carries the message; `git show --numstat` carries the stat
+   * line. Binary files report `-` in numstat and are counted as files with no
+   * line delta, which is what the card should say.
+   *
+   * @param cwd - repository directory.
+   * @param sha - any ref or commit id.
+   * @returns `{ sha, short, author, email, date, committer, subject, body, files, additions, deletions }`.
+   */
+  async function commitDetail(cwd, sha) {
+    const format = '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%cn%x1f%s%x1f%b'
+    const info = await must(cwd, ['show', '-s', '--date=iso-strict', format, sha], { timeoutMs: 20000 })
+    const [full, short, author, email, date, committer, subject, body] = String(info.stdout).split('\x1f')
+    const stat = await exec(cwd, ['show', '--numstat', '--format=', sha], { timeoutMs: 20000 })
+    let files = 0
+    let additions = 0
+    let deletions = 0
+    for (const line of String(stat.stdout).split(/\r?\n/)) {
+      if (line.trim() === '') continue
+      const [add, del] = line.split('\t')
+      files += 1
+      if (add !== '-' && Number.isFinite(Number(add))) additions += Number(add)
+      if (del !== '-' && Number.isFinite(Number(del))) deletions += Number(del)
+    }
+    return {
+      sha: full ?? sha,
+      short: short ?? String(sha).slice(0, 7),
+      author: author ?? '',
+      email: email ?? '',
+      date: date ?? null,
+      committer: committer ?? '',
+      subject: subject ?? '',
+      body: String(body ?? '').trim(),
+      files,
+      additions,
+      deletions,
+    }
+  }
+
+  /**
+   * Where one branch points and how it tracks its upstream.
+   * @param cwd - repository directory.
+   * @param branch - the local branch name.
+   * @returns `{ branch, exists, short, author, date, subject, upstream, track }`.
+   */
+  async function branchDetail(cwd, branch) {
+    const info = await exec(cwd, ['log', '-1', '--date=iso-strict', '--pretty=format:%h%x1f%an%x1f%aI%x1f%s', branch], { timeoutMs: 20000 })
+    if (info.code !== 0) return { branch, exists: false }
+    const [short, author, date, subject] = String(info.stdout).split('\x1f')
+    // `for-each-ref --format` does not understand `%x1f`; `|` is a separator it
+    // can carry, and a branch name may not contain one.
+    const ref = await exec(cwd, ['for-each-ref', '--format=%(upstream:short)|%(upstream:track)', `refs/heads/${branch}`], { timeoutMs: 10000 })
+    const [upstream, track] = String(ref.stdout).trim().split('|')
+    return {
+      branch,
+      exists: true,
+      short: short ?? null,
+      author: author ?? '',
+      date: date ?? null,
+      subject: subject ?? '',
+      upstream: upstream || null,
+      track: track || null,
+    }
+  }
+
   return {
     probe,
     status,
@@ -584,6 +651,8 @@ export function createGit(exec) {
     addWorktree,
     removeWorktree,
     pruneWorktrees,
+    commitDetail,
+    branchDetail,
   }
 }
 

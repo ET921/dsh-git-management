@@ -159,6 +159,16 @@ console.log('\n# git engine against a real repository')
     check('one commit in log', log.length === 1, log)
     check('log subject', log[0]?.subject === 'initial commit', log[0])
 
+    const detail = await actions.handle('commitDetail', { path: dir, sha: 'HEAD' })
+    check('commitDetail carries the subject', detail.subject === 'initial commit', detail)
+    check('commitDetail counts the touched files', detail.files === 3, detail)
+    check('commitDetail sums additions', detail.additions === 3 && detail.deletions === 0, detail)
+    check('commitDetail carries the author', detail.author === 'Dev', detail)
+
+    const branchInfo = await actions.handle('branchDetail', { path: dir, branch: 'main' })
+    check('branchDetail finds the branch', branchInfo.exists === true && branchInfo.subject === 'initial commit', branchInfo)
+    check('branchDetail reports no upstream yet', branchInfo.upstream === null, branchInfo)
+
     await writeFile(join(dir, 'README.md'), '# fixture\n\nmore\n')
     snapshot = await git.status(dir)
     check('modification shows as M', snapshot.changes[0]?.status === 'M', snapshot.changes)

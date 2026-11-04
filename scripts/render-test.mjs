@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { JSDOM } from 'jsdom'
 import React, { act as reactAct } from 'react'
 import { createRoot } from 'react-dom/client'
+import * as reactDom from 'react-dom'
 import { act as legacyAct } from 'react-dom/test-utils'
 
 /** React 18.3 exposes `act`; older 18.x only has it under test-utils. */
@@ -84,6 +85,10 @@ function respond(action) {
       return { file: 'src/App.tsx', staged: true, patch: 'diff --git a/src/App.tsx b/src/App.tsx\n@@ -1 +1,2 @@\n-old\n+new\n+more', isBinary: false }
     case 'github':
       return { connected: true, authorized: false, reason: 'no-token', remote: { host: 'github.com', owner: 'acme', repo: 'demo', slug: 'acme/demo', webUrl: 'https://github.com/acme/demo', remoteUrl: 'git@github.com:acme/demo.git' } }
+    case 'commitDetail':
+      return { sha: 'deadbeefdeadbeef', short: 'deadbee', author: 'Ada', date: new Date().toISOString(), subject: 'wire the sidebar panel', body: 'A longer body line.', files: 2, additions: 10, deletions: 3 }
+    case 'branchDetail':
+      return { branch: 'main', exists: true, short: 'abc1234', author: 'Ada', date: new Date().toISOString(), subject: 'wire the sidebar panel', upstream: 'origin/main', track: null }
     case 'worktrees':
       return {
         isRepo: true,
@@ -141,6 +146,7 @@ check('bundle registered through ModuleLoader', loaded !== null && loaded.id ===
 
 const moduleExports = loaded.factory((id) => {
   if (id === 'react') return React
+  if (id === 'react-dom') return reactDom
   throw new Error(`unexpected require: ${id}`)
 })
 
@@ -180,20 +186,38 @@ const sidebarRightTabs = {
   },
 }
 
+/** Every `sidebarRight.openTab` call, so the click's navigation is assertable. */
+const tabOpens = []
+const sidebarRight = {
+  openTab: (kind, options) => {
+    tabOpens.push({ kind, params: options?.params ?? null })
+  },
+}
+
 /** Run an effect and keep its disposer, like a cordis context does. */
-function effect(fn) {
-  const disposer = fn()
+function effect(fn) {  const disposer = fn()
   return () => {
     if (typeof disposer === 'function') disposer()
   }
 }
 
+/** Every `layout.selectPanel` call, so navigation itself is assertable. */
+const panelSelections = []
+
+const layout = {
+  panelInfo: { getSnapshot: () => ({ activePanelId: panelSelections.length === 0 ? null : panelSelections[panelSelections.length - 1] }) },
+  selectPanel: (id) => {
+    panelSelections.push(id)
+  },
+}
+
 const ctx = {
   effect,
-  inject: (deps, callback) => callback({ slots, locale, effect, sidebarRightTabs }),
+  inject: (deps, callback) => callback({ slots, locale, effect, sidebarRightTabs, layout, sidebarRight }),
   slots,
   locale,
   sidebarRightTabs,
+  layout,
 }
 
 await act(async () => {
@@ -269,17 +293,91 @@ check(
 )
 check('a clean worktree says so', container.querySelectorAll('.gmg-wt').length === 2)
 
-// Opening one file asks for its diff and draws the coloured lines.
+// Clicking a file swaps the tab body to the diff — the conversation column is
+// never touched, so the panel must render in this same container.
 const fileRow = container.querySelector('.gmg-file')
+check('no `main` panel is registered (the diff stays in the column)', registrations.every((entry) => entry.declaration.name !== 'main'), registrations.map((entry) => entry.declaration.name))
+
 if (fileRow !== null) {
   await act(async () => {
     fileRow.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await new Promise((resolve) => setTimeout(resolve, 20))
   })
-  check('clicking a file requests its diff', calls.some((call) => call.action === 'diff'), calls.map((call) => call.action))
-  check('diff lines are classified', container.querySelector('.gmg-diff-line.is-add') !== null, container.querySelector('.gmg-diff')?.textContent?.slice(0, 120))
+  check('clicking a file opens the diff tab', tabOpens.length === 1 && tabOpens[0].kind === 'git-diff', tabOpens)
+  check('the tab carries the file as navigation params', tabOpens[0]?.params?.file === 'src/App.tsx', tabOpens[0]?.params)
+  check('the change list is still on screen', container.querySelector('.gmg-file') !== null)
+
+  // The diff tab body renders from those params, the way the column feeds it.
+  const params = tabOpens[0]?.params ?? null
+  const diffRegistration = registrations.find((entry) => entry.declaration.name === 'sidebar.right.pane.tab' && entry.declaration.key === 'dsh-git-diff')
+  check('the diff tab body is registered', diffRegistration !== undefined, registrations.map((entry) => entry.declaration.key))
+
+  if (diffRegistration !== undefined && params !== null) {
+    const diffContainer = document.createElement('div')
+    document.body.appendChild(diffContainer)
+    const diffRoot = createRoot(diffContainer)
+    let closed = false
+    await act(async () => {
+      diffRoot.render(
+        React.createElement(diffRegistration.component, {
+          ...diffRegistration.declaration.inject(),
+          actions: { close: () => { closed = true } },
+          useTabNavigation: (selector) => (typeof selector === 'function' ? selector({ params, revision: 1 }) : { params, revision: 1 }),
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    })
+    check('the diff tab requests the patch', calls.some((call) => call.action === 'diff'), calls.map((call) => call.action))
+    check('added lines are drawn', diffContainer.querySelector('.gmg-diff-cell.is-add') !== null, diffContainer.innerHTML.slice(0, 200))
+    check('removed lines are drawn', diffContainer.querySelector('.gmg-diff-cell.is-del') !== null)
+    check('both gutters carry numbers', diffContainer.querySelectorAll('.gmg-diff-no').length >= 4)
+
+    // The split toggle re-pairs the same rows.
+    const splitButton = [...diffContainer.querySelectorAll('button')].find((button) => /[并並]排|Split/.test(button.textContent ?? ''))
+    if (splitButton !== undefined) {
+      await act(async () => {
+        splitButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      })
+      check('split mode draws paired cells', diffContainer.querySelector('.gmg-diffbody.is-split') !== null)
+    } else {
+      check('a split toggle exists', false, diffContainer.querySelector('.gmg-diffhead')?.textContent)
+    }
+
+    // Closing goes through the tab's own action, so the strip drops the tab.
+    const closeButton = [...diffContainer.querySelectorAll('button')].find((button) => (button.textContent ?? '').includes('返回'))
+    if (closeButton !== undefined) {
+      await act(async () => {
+        closeButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      })
+      check('closing the diff asks the tab to close', closed === true)
+    } else {
+      check('a back button exists', false)
+    }
+
+    await act(async () => {
+      diffRoot.unmount()
+    })
+    diffContainer.remove()
+  }
 } else {
   check('a file row exists to click', false)
+}
+
+// Hovering a commit floats its card after the dwell delay.
+// React derives onMouseEnter from mouseover, which is the event it listens for.
+const commitRow = container.querySelector('.gmg-commit-row')
+if (commitRow !== null) {
+  await act(async () => {
+    commitRow.dispatchEvent(new dom.window.MouseEvent('mouseover', { bubbles: true, clientX: 40, clientY: 60 }))
+    await new Promise((resolve) => setTimeout(resolve, 380))
+  })
+  const card = document.body.querySelector('.gmg-hover')
+  check('resting on a commit floats a card', card !== null, document.body.innerHTML.slice(-200))
+  check('the card carries the commit subject', (card?.textContent ?? '').includes('wire the sidebar panel'), card?.textContent?.slice(0, 160))
+  check('the card fetches the commit stat', calls.some((call) => call.action === 'commitDetail'), calls.map((call) => call.action))
+} else {
+  check('a commit row exists to hover', false)
 }
 
 await act(async () => {
