@@ -273,23 +273,39 @@ console.log('\n# git engine against a real repository')
     const realFetch = global.fetch
     const githubCalls = []
     global.fetch = async (url) => {
-      githubCalls.push(String(url))
-      if (String(url).endsWith('/user')) {
+      const target = String(url)
+      githubCalls.push(target)
+      if (target.endsWith('/user')) {
         return { ok: true, status: 200, text: async () => JSON.stringify({ login: 'dev-gh', name: 'Dev', avatar_url: null }) }
+      }
+      if (target.includes('/search/commits')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ total_count: 1, items: [{ author: { login: 'other-gh' } }] }) }
       }
       return { ok: false, status: 404, text: async () => JSON.stringify({ message: 'Not Found' }) }
     }
     try {
       const own = await actions.handle('github', { path: dir, action: 'commit', sha: 'HEAD', token: 'stub' })
-      check('an unpushed own commit borrows the authenticated login', own.commit?.login === 'dev-gh' && own.local === true, own)
-      check('the fallback asks for the commit and the viewer only', githubCalls.length === 2, githubCalls)
+      check('an unpushed own commit is named by the authenticated account', own.commit?.login === 'dev-gh' && own.local === true, own)
+      check('the own path asks for the commit and the viewer only', githubCalls.length === 2 && githubCalls[1].endsWith('/user'), githubCalls)
+
+      // A commit by somebody else, still local: there is no sha on GitHub to
+      // ask about, so the address is what names the author.
+      const foreignCommit = await exec(dir, ['-c', 'user.name=Grace', '-c', 'user.email=grace@example.com', 'commit', '--allow-empty', '-m', 'by grace'])
+      const foreignSha = String((await exec(dir, ['rev-parse', 'HEAD'])).stdout).trim()
+      check('the fixture can make a commit by another author', foreignCommit.code === 0 && foreignSha.length === 40, foreignCommit)
+      githubCalls.length = 0
+      const foreign = await actions.handle('github', { path: dir, action: 'commit', sha: foreignSha, token: 'stub' })
+      check('another author is named by their email, unpushed', foreign.commit?.login === 'other-gh' && foreign.local === true, foreign)
+      check(
+        'the other-author path searches the commit email',
+        githubCalls.length === 2 && githubCalls[1].includes('/search/commits?q=author-email%3Agrace%40example.com'),
+        githubCalls,
+      )
 
       githubCalls.length = 0
-      await exec(dir, ['config', 'user.email', 'someone@example.com'])
-      const foreign = await actions.handle('github', { path: dir, action: 'commit', sha: 'HEAD', token: 'stub' })
-      check('a commit by another address stays unnamed', foreign.commit === null && foreign.local === true, foreign)
-      check('no viewer lookup for somebody else', githubCalls.length === 1, githubCalls)
-      await exec(dir, ['config', 'user.email', 'dev@example.com'])
+      const again = await actions.handle('github', { path: dir, action: 'commit', sha: foreignSha, token: 'stub' })
+      check('the same address is only looked up once', again.commit?.login === 'other-gh' && githubCalls.length === 1, githubCalls)
+      await exec(dir, ['reset', '--soft', 'HEAD~1'])
     } finally {
       global.fetch = realFetch
     }
