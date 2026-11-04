@@ -139,7 +139,10 @@ function HoverTarget(props) {
 }
 
 /**
- * The commit card.
+ * The commit card: sha, author and age, the message with its body, and the
+ * stat line in the wording the Source Control view has always used
+ * ("N files changed, X insertions(+), Y deletions(-)").
+ *
  * @param props - `{ commit, t }`.
  * @returns the card contents.
  */
@@ -147,27 +150,22 @@ function CommitHoverCard(props) {
   const { commit, t } = props
   const path = gitStore.get().path
   const { detail, error } = useDetail(path === null ? null : `${path}|${commit.sha}`, 'commitDetail', { path, sha: commit.sha })
-  const remote = gitStore.get().github?.remote
-  const url = remote?.webUrl ? `${remote.webUrl}/commit/${commit.sha}` : null
+  const body = typeof detail?.body === 'string' ? detail.body.trim() : ''
   return h(
     'div',
     { className: 'gmg-hovercard' },
     h('div', { className: 'gmg-hoverhead' }, h('span', { className: 'gmg-sha' }, commit.short), h('span', { className: 'gmg-hoverauthor' }, `${commit.author} · ${relativeTime(commit.date, currentLocale())}`)),
     h('div', { className: 'gmg-hoversubject' }, commit.subject),
-    detail?.body ? h('div', { className: 'gmg-hoverbody' }, detail.body.slice(0, 400)) : null,
+    body === '' ? null : h('div', { className: 'gmg-hoverbody' }, body.slice(0, 600)),
     detail !== null
       ? h(
           'div',
           { className: 'gmg-hoverstats' },
-          `${detail.files} ${t('hoverFiles')} · `,
-          h('span', { className: 'gmg-add-count' }, `+${detail.additions}`),
-          ' ',
-          h('span', { className: 'gmg-del-count' }, `-${detail.deletions}`),
+          t('hoverStatLine', { files: detail.files, additions: detail.additions, deletions: detail.deletions }),
         )
       : error === null
         ? h('div', { className: 'gmg-hoverstats' }, t('hoverLoading'))
         : null,
-    url === null ? null : h('div', { className: 'gmg-hoverfoot' }, h(IconGithub, { size: 12 }), t('hoverOpenOnGithub')),
   )
 }
 

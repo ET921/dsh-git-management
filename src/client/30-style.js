@@ -306,7 +306,7 @@ const PANEL_CSS = `
 .gmg-hoverhead { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-secondary); min-width: 0; }
 .gmg-hoverauthor { font-family: var(--gmg-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gmg-hoversubject { font-weight: 600; font-size: 12.5px; line-height: 1.4; }
-.gmg-hoverbody { color: var(--dsw-alias-label-secondary); white-space: pre-wrap; max-height: 132px; overflow: hidden; font-size: 11.5px; line-height: 1.5; }
+.gmg-hoverbody { color: var(--dsw-alias-label-secondary); white-space: pre-wrap; max-height: 240px; overflow: hidden; font-size: 11.5px; line-height: 1.55; }
 .gmg-hoverstats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--dsw-alias-label-secondary); font-size: 11.5px; }
 .gmg-hoverfoot { display: flex; align-items: center; gap: 5px; color: var(--dsw-alias-brand-primary); font-size: 11.5px; }
 

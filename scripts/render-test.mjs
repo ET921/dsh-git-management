@@ -373,8 +373,12 @@ if (commitRow !== null) {
     await new Promise((resolve) => setTimeout(resolve, 380))
   })
   const card = document.body.querySelector('.gmg-hover')
+  const cardText = card?.textContent ?? ''
   check('resting on a commit floats a card', card !== null, document.body.innerHTML.slice(-200))
-  check('the card carries the commit subject', (card?.textContent ?? '').includes('wire the sidebar panel'), card?.textContent?.slice(0, 160))
+  check('the card carries the commit subject', cardText.includes('wire the sidebar panel'), cardText.slice(0, 160))
+  check('the card renders the commit body', cardText.includes('A longer body line.'), cardText.slice(0, 240))
+  check('the card carries the full stat line', /2 個檔案變更，10 行插入\(\+\)，3 行刪除\(-\)/.test(cardText), cardText.slice(0, 240))
+  check('the card no longer links to GitHub', cardText.includes('GitHub') === false, cardText.slice(0, 240))
   check('the card fetches the commit stat', calls.some((call) => call.action === 'commitDetail'), calls.map((call) => call.action))
 } else {
   check('a commit row exists to hover', false)

@@ -130,8 +130,7 @@ const zh = {
   diffNothingOpen: '從右側的變更清單點一個檔案。',
   diffTabTitle: '檔案差異',
   hoverLoading: '讀取中…',
-  hoverFiles: '個檔案',
-  hoverOpenOnGithub: '在 GitHub 開啟這個提交',
+  hoverStatLine: '{files} 個檔案變更，{additions} 行插入(+)，{deletions} 行刪除(-)',
   hoverNoBranch: '這個分支還沒有提交。',
 }
 
@@ -243,8 +242,7 @@ const en = {
   diffNothingOpen: 'Pick a file in the change list on the right.',
   diffTabTitle: 'File diff',
   hoverLoading: 'Reading…',
-  hoverFiles: 'files',
-  hoverOpenOnGithub: 'Open this commit on GitHub',
+  hoverStatLine: '{files} files changed, {additions} insertions(+), {deletions} deletions(-)',
   hoverNoBranch: 'This branch has no commits yet.',
 }
 
