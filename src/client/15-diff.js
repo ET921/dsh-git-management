@@ -25,6 +25,8 @@ let gmgDiffState = {
   pairs: [],
   /** `unified` or `split`. */
   mode: 'unified',
+  /** `full` shows the whole file with the changes marked; `hunks` shows git's three context lines. */
+  context: 'full',
   loading: false,
   error: null,
   /** Set when the file has no textual diff (binary, or empty). */
@@ -182,12 +184,14 @@ function pairRows(rows) {
  * so opening one is purely a state change — the conversation column is never
  * touched.
  *
- * @param input - `{ path, file, staged, status }`.
+ * @param input - `{ path, file, staged, status, context }`.
  * @returns the parsed rows.
  */
 async function openDiff(input) {
+  const context = input.context ?? gmgDiffState.context ?? 'full'
   setDiffState({
     target: input,
+    context,
     loading: true,
     error: null,
     note: null,
@@ -195,7 +199,7 @@ async function openDiff(input) {
     pairs: [],
   })
   try {
-    const result = await callHost('diff', { path: input.path, file: input.file, staged: input.staged })
+    const result = await callHost('diff', { path: input.path, file: input.file, staged: input.staged, context })
     const patch = String(result?.patch ?? '')
     if (result?.isBinary === true) {
       setDiffState({ loading: false, note: 'binary' })
@@ -206,7 +210,7 @@ async function openDiff(input) {
       return
     }
     const parsed = parsePatch(patch)
-    setDiffState({ loading: false, rows: parsed.rows, pairs: parsed.pairs })
+    setDiffState({ loading: false, context, rows: parsed.rows, pairs: parsed.pairs })
   } catch (error) {
     setDiffState({ loading: false, error: String(error?.message ?? error) })
   }
@@ -224,4 +228,18 @@ function closeDiff() {
  */
 function toggleDiffMode() {
   setDiffState({ mode: gmgDiffState.mode === 'unified' ? 'split' : 'unified' })
+}
+
+/**
+ * Ask git for the other amount of context and re-read the open file.
+ *
+ * `full` is the default: the panel reads like the file itself, with the changes
+ * marked, rather than three lines around a hunk.
+ */
+async function toggleDiffContext() {
+  const target = gmgDiffState.target
+  if (target === null) return
+  const context = gmgDiffState.context === 'full' ? 'hunks' : 'full'
+  setDiffState({ context })
+  await openDiff({ ...target, context })
 }

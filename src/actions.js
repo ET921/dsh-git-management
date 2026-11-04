@@ -236,7 +236,7 @@ export function createActions({ git, workspaces }) {
       case 'status':
         return git.status(path)
       case 'diff':
-        return git.diff(path, String(params.file ?? ''), Boolean(params.staged))
+        return git.diff(path, String(params.file ?? ''), Boolean(params.staged), params.context === 'full' ? 'full' : 'hunks')
       case 'stagedPatch':
         return { patch: await git.stagedPatch(path) }
       case 'stage':

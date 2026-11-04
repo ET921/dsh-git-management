@@ -82,7 +82,25 @@ function respond(action, params) {
     case 'branches':
       return { current: 'main', branches: [{ name: 'main', current: true, upstream: 'origin/main', sha: 'abc1234', date: null }] }
     case 'diff':
-      return { file: 'src/App.tsx', staged: true, patch: 'diff --git a/src/App.tsx b/src/App.tsx\n@@ -1 +1,2 @@\n-old\n+new\n+more', isBinary: false }
+      return {
+        file: 'src/App.tsx',
+        staged: true,
+        isBinary: false,
+        patch: [
+          'diff --git a/src/App.tsx b/src/App.tsx',
+          'index 1111111..2222222 100644',
+          '--- a/src/App.tsx',
+          '+++ b/src/App.tsx',
+          '@@ -1,5 +1,6 @@',
+          ' import x',
+          ' const a = 1',
+          '-old',
+          '+new',
+          '+more',
+          ' const b = 2',
+          ' export default a',
+        ].join('\n'),
+      }
     case 'github':
       if (params?.action === 'commit') return { connected: true, authorized: true, commit: { sha: params.sha, login: 'EvT', name: 'EvT', avatarUrl: null } }
       if (params?.action === 'pulls') return { connected: true, authorized: true, defaultBranch: 'main', pulls: [] }
@@ -134,7 +152,7 @@ global.localStorage = dom.window.localStorage
 const calls = []
 global.fetch = async (url, init) => {
   const body = JSON.parse(init.body)
-  calls.push({ url: String(url), action: body.action })
+  calls.push({ url: String(url), action: body.action, params: body.params })
   return { ok: true, status: 200, json: async () => ({ ok: true, result: respond(body.action, body.params) }) }
 }
 
@@ -335,10 +353,13 @@ if (fileRow !== null) {
       )
       await new Promise((resolve) => setTimeout(resolve, 40))
     })
-    check('the diff tab requests the patch', calls.some((call) => call.action === 'diff'), calls.map((call) => call.action))
+    const diffCall = calls.filter((call) => call.action === 'diff').pop()
+    check('the diff tab requests the patch', diffCall !== undefined, calls.map((call) => call.action))
+    check('the patch is requested with full file context', diffCall?.params?.context === 'full', diffCall?.params)
     check('added lines are drawn', diffContainer.querySelector('.gmg-diff-cell.is-add') !== null, diffContainer.innerHTML.slice(0, 200))
     check('removed lines are drawn', diffContainer.querySelector('.gmg-diff-cell.is-del') !== null)
     check('both gutters carry numbers', diffContainer.querySelectorAll('.gmg-diff-no').length >= 4)
+    check('the whole file is drawn, not just the hunk', diffContainer.querySelectorAll('.gmg-diffrow').length >= 10, diffContainer.querySelectorAll('.gmg-diffrow').length)
 
     // The split toggle re-pairs the same rows.
     const splitButton = [...diffContainer.querySelectorAll('button')].find((button) => /[并並]排|Split/.test(button.textContent ?? ''))
@@ -348,6 +369,8 @@ if (fileRow !== null) {
         await new Promise((resolve) => setTimeout(resolve, 10))
       })
       check('split mode draws paired cells', diffContainer.querySelector('.gmg-diffbody.is-split') !== null)
+    const splitRows = [...diffContainer.querySelectorAll('.gmg-diffrow.is-splitrow')].filter((row) => row.classList.contains('is-hunk') === false)
+    check('every split row carries two gutters and two cells', splitRows.length > 0 && splitRows.every((row) => row.children.length === 4), splitRows.map((row) => row.children.length))
     } else {
       check('a split toggle exists', false, diffContainer.querySelector('.gmg-diffhead')?.textContent)
     }

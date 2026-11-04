@@ -23,7 +23,11 @@ function DiffGutter(props) {
  * @returns the cell element.
  */
 function DiffCell(props) {
-  return h('span', { className: `gmg-diff-cell is-${props.kind ?? 'blank'}` }, props.text ?? '')
+  return h(
+    'span',
+    { className: `gmg-diff-cell is-${props.kind ?? 'blank'}`, title: props.clip === true ? props.text ?? '' : undefined },
+    props.text ?? '',
+  )
 }
 
 /**
@@ -73,9 +77,9 @@ function SplitDiff(props) {
         'div',
         { className: 'gmg-diffrow is-splitrow', key: index },
         h(DiffGutter, { value: left?.oldNo ?? null }),
-        h(DiffCell, { kind: left?.kind ?? 'blank', text: left?.text ?? '' }),
+        h(DiffCell, { kind: left?.kind ?? 'blank', text: left?.text ?? '', clip: true }),
         h(DiffGutter, { value: right?.newNo ?? null }),
-        h(DiffCell, { kind: right?.kind ?? 'blank', text: right?.text ?? '' }),
+        h(DiffCell, { kind: right?.kind ?? 'blank', text: right?.text ?? '', clip: true }),
       )
     }),
   )
@@ -172,6 +176,16 @@ function DiffPanel(props) {
       'button',
       { className: 'gmg-btn', type: 'button', disabled: siblings.length < 2, onClick: () => go(1), title: t('diffNext') },
       '↓',
+    ),
+    h(
+      'button',
+      {
+        className: 'gmg-btn',
+        type: 'button',
+        onClick: () => toggleDiffContext(),
+        title: t('diffContextHint'),
+      },
+      state.context === 'full' ? t('diffOnlyChanges') : t('diffFullFile'),
     ),
     h(
       'button',
