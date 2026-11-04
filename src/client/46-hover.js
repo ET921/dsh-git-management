@@ -96,7 +96,9 @@ function HoverLayer(props) {
     const height = Math.min(element.getBoundingClientRect().height, maxHeight)
     const aboveRoom = anchor.top - 8
     const belowRoom = window.innerHeight - anchor.bottom - 8
-    const placeAbove = aboveRoom >= height || aboveRoom >= belowRoom
+    // The branch pill asks for a fixed direction: its bar sits at the top of the
+    // panel, so a card that kept flipping sides would jump between openings.
+    const placeAbove = props.below === true ? false : aboveRoom >= height || aboveRoom >= belowRoom
     const preferred = placeAbove ? anchor.top - height - 8 : anchor.bottom + 8
     const top = Math.max(8, Math.min(preferred, window.innerHeight - height - 8))
     const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 12))
@@ -117,11 +119,19 @@ const HOVER_ROW_SELECTOR = '.gmg-commit-row, .gmg-branch'
 /**
  * Wrap a row so that resting the pointer on it enlarges it.
  *
- * Leaving the row does not close the card at once: the pointer may be on its
- * way into the card to scroll it. The close is postponed, and entering the card
+ * Two shapes, because the two rows live in different containers:
+ *
+ * - `inline` (the history rows) grows *below the row, inside the list*. Nothing
+ *   overlaps: the detail pushes the rows under it down instead of covering them,
+ *   and the direction is always the same one.
+ * - the branch pill sits in a horizontal bar where growing in place would shove
+ *   its own buttons, so it keeps a small floating card.
+ *
+ * Leaving the row does not close either at once: the pointer may be on its way
+ * into the detail to scroll it. The close is postponed, and entering the detail
  * cancels that.
  *
- * @param props - `{ card, delay, children }`; `card` is the element to float.
+ * @param props - `{ card, delay, inline, children }`.
  * @returns the wrapper element.
  */
 function HoverTarget(props) {
@@ -178,7 +188,11 @@ function HoverTarget(props) {
     'div',
     { className: 'gmg-hovertarget', onMouseEnter: enter, onMouseLeave: leave, onMouseDown: closeNow },
     props.children,
-    anchor === null ? null : h(HoverLayer, { anchor, onEnter: keepOpen, onLeave: scheduleHide }, props.card),
+    anchor === null
+      ? null
+      : props.inline === true
+        ? h('div', { className: 'gmg-inlinedetail', onMouseEnter: keepOpen, onMouseLeave: scheduleHide }, props.card)
+        : h(HoverLayer, { anchor, below: props.below === true, onEnter: keepOpen, onLeave: scheduleHide }, props.card),
   )
 }
 
