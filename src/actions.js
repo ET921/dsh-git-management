@@ -334,19 +334,44 @@ export function createActions({ git, workspaces }) {
     if (request === 'commit') {
       const sha = String(params.sha ?? '').trim()
       if (sha === '') throw new Error('sha is required')
-      const info = await github(token, `/repos/${remote.slug}/commits/${sha}`)
-      return {
-        connected: true,
-        authorized: true,
-        remote,
-        commit: {
-          sha: info.sha,
-          // `author` is GitHub's account link; null when the commit email is not
-          // on any account, which is why the panel keeps git's name as fallback.
-          login: info.author?.login ?? null,
-          name: info.author?.login ?? info.commit?.author?.name ?? null,
-          avatarUrl: info.author?.avatar_url ?? null,
-        },
+      try {
+        const info = await github(token, `/repos/${remote.slug}/commits/${sha}`)
+        return {
+          connected: true,
+          authorized: true,
+          remote,
+          commit: {
+            sha: info.sha,
+            // `author` is GitHub's account link; null when the commit email is not
+            // on any account, which is why the panel keeps git's name as fallback.
+            login: info.author?.login ?? null,
+            name: info.author?.login ?? info.commit?.author?.name ?? null,
+            avatarUrl: info.author?.avatar_url ?? null,
+          },
+        }
+      } catch (error) {
+        if (error?.status !== 404) throw error
+        // A commit that only exists in this checkout has no GitHub record to
+        // name its author. When the address on it is this machine's own
+        // `user.email`, the account behind the token is who GitHub will show
+        // once it is pushed; anyone else's local commit keeps git's name
+        // rather than borrowing the viewer's.
+        const author = await git.commitAuthor(path, sha)
+        const own = author !== null && author.email !== '' && author.email === (await git.userEmail(path))
+        if (!own) return { connected: true, authorized: true, remote, commit: null, local: true }
+        const viewer = await github(token, '/user')
+        return {
+          connected: true,
+          authorized: true,
+          remote,
+          local: true,
+          commit: {
+            sha,
+            login: viewer.login ?? null,
+            name: viewer.name ?? viewer.login ?? null,
+            avatarUrl: viewer.avatar_url ?? null,
+          },
+        }
       }
     }
     if (request === 'pulls') {

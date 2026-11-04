@@ -265,6 +265,35 @@ console.log('\n# git engine against a real repository')
     const unauthenticated = await actions.handle('github', { path: dir, action: 'repo' })
     check('without a token the API is refused', unauthenticated.authorized === false || process.env.GITHUB_TOKEN !== undefined, unauthenticated)
 
+    // ---- GitHub identity for a commit that is not on the remote yet --------
+    const localAuthor = await git.commitAuthor(dir, 'HEAD')
+    check('commitAuthor reads the name and email', localAuthor?.name === 'Dev' && localAuthor?.email === 'dev@example.com', localAuthor)
+    equal('userEmail reads the checkout identity', await git.userEmail(dir), 'dev@example.com')
+
+    const realFetch = global.fetch
+    const githubCalls = []
+    global.fetch = async (url) => {
+      githubCalls.push(String(url))
+      if (String(url).endsWith('/user')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ login: 'dev-gh', name: 'Dev', avatar_url: null }) }
+      }
+      return { ok: false, status: 404, text: async () => JSON.stringify({ message: 'Not Found' }) }
+    }
+    try {
+      const own = await actions.handle('github', { path: dir, action: 'commit', sha: 'HEAD', token: 'stub' })
+      check('an unpushed own commit borrows the authenticated login', own.commit?.login === 'dev-gh' && own.local === true, own)
+      check('the fallback asks for the commit and the viewer only', githubCalls.length === 2, githubCalls)
+
+      githubCalls.length = 0
+      await exec(dir, ['config', 'user.email', 'someone@example.com'])
+      const foreign = await actions.handle('github', { path: dir, action: 'commit', sha: 'HEAD', token: 'stub' })
+      check('a commit by another address stays unnamed', foreign.commit === null && foreign.local === true, foreign)
+      check('no viewer lookup for somebody else', githubCalls.length === 1, githubCalls)
+      await exec(dir, ['config', 'user.email', 'dev@example.com'])
+    } finally {
+      global.fetch = realFetch
+    }
+
     const empties = await actions.handle('stage', { path: dir, files: [] }).then(
       () => 'resolved',
       () => 'rejected',
