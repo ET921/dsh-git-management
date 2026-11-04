@@ -278,16 +278,49 @@ export function createGit(exec) {
    * @returns `{ patch, isBinary, isUntracked }`.
    */
   async function diff(cwd, file, staged, context = 'hunks') {
-    const args = ['diff', '--no-color', context === 'full' ? '--unified=999999' : '--unified=3']
+    const unified = context === 'full' ? '--unified=999999' : '--unified=3'
+    const args = ['diff', '--no-color', unified]
     if (staged) args.push('--cached')
     args.push('--', file)
     const result = await exec(cwd, args, { allowExit: [0, DIFF_EXIT], timeoutMs: 30000 })
     if (result.code !== 0 && result.code !== DIFF_EXIT) {
       throw new GitError(firstLine(result.stderr) || 'git diff failed', { argv: ['git', ...args], ...result })
     }
-    const patch = String(result.stdout)
-    const isBinary = /^Binary files .* differ$/m.test(patch) || patch.includes('GIT binary patch')
-    return { file, staged: Boolean(staged), context, patch, isBinary, isUntracked: false }
+    let patch = String(result.stdout)
+    let isUntracked = false
+    // `git diff` compares two recorded sides. A file git has never seen has
+    // neither, so it prints nothing at all — which used to reach the panel as
+    // "no textual difference". Against the null device it reads as what it
+    // becomes once staged: one new file, every line an addition.
+    if (!staged && patch.trim() === '' && (await isTracked(cwd, file)) === false) {
+      const created = await exec(cwd, ['diff', '--no-color', unified, '--no-index', '--', '/dev/null', file], { allowExit: [0, DIFF_EXIT], timeoutMs: 30000 })
+      if (created.code === 0 || created.code === DIFF_EXIT) {
+        patch = String(created.stdout)
+        isUntracked = true
+      }
+    }
+    // Both markers are whole lines of git's own: an added line of source that
+    // merely quotes the words carries a `+` in front, so it cannot match. The
+    // substring check this replaces flagged every diff of a file that mentions
+    // "GIT binary patch" — including this file, which is how it was found.
+    const isBinary = /^Binary files .* differ$/m.test(patch) || /^GIT binary patch$/m.test(patch)
+    return { file, staged: Boolean(staged), context, patch, isBinary, isUntracked }
+  }
+
+  /**
+   * Whether the index knows this path.
+   *
+   * `ls-files --error-unmatch` exits non-zero for a path git has never seen;
+   * that is the difference between "this file has no changes" and "this file
+   * has no side to diff against yet".
+   *
+   * @param cwd - repository directory.
+   * @param file - repository-relative path.
+   * @returns true when the path is tracked or staged.
+   */
+  async function isTracked(cwd, file) {
+    const result = await exec(cwd, ['ls-files', '--error-unmatch', '--', file], { timeoutMs: 10000 })
+    return result.code === 0
   }
 
   /**

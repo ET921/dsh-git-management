@@ -176,6 +176,30 @@ console.log('\n# git engine against a real repository')
 
     const patch = await git.diff(dir, 'README.md', false)
     check('diff mentions the added line', patch.patch.includes('+more'), patch.patch)
+    check('a tracked diff is not flagged untracked', patch.isUntracked === false)
+
+    // An untracked file has no side to compare against, so `git diff` prints
+    // nothing; the host falls back to the null device and the panel gets the
+    // file's content as added lines instead of "no textual difference".
+    await writeFile(join(dir, 'untracked.txt'), 'first line\nsecond line\n')
+    const untrackedPatch = await git.diff(dir, 'untracked.txt', false)
+    check('an untracked file still gets a patch', untrackedPatch.isUntracked === true && untrackedPatch.patch.includes('+first line'), untrackedPatch.patch.slice(0, 160))
+    check('the untracked patch reads as a new file', untrackedPatch.patch.includes('new file mode'), untrackedPatch.patch.slice(0, 160))
+    await writeFile(join(dir, 'untracked.bin'), Buffer.from([0, 1, 2, 3]))
+    const untrackedBinary = await git.diff(dir, 'untracked.bin', false)
+    check('an untracked binary reports binary', untrackedBinary.isUntracked === true && untrackedBinary.isBinary === true, untrackedBinary.patch.slice(0, 120))
+    await rm(join(dir, 'untracked.txt'), { force: true })
+    await rm(join(dir, 'untracked.bin'), { force: true })
+
+    // A text diff that quotes the binary marker must stay text: the marker is a
+    // whole line git prints itself, not any occurrence of the words.
+    await writeFile(join(dir, 'marker.txt'), "const isBinary = patch.includes('GIT binary patch')\n")
+    await git.stage(dir, ['marker.txt'])
+    const markerDiff = await git.diff(dir, 'marker.txt', true)
+    check('a diff that quotes the binary marker stays text', markerDiff.isBinary === false, markerDiff.patch.slice(0, 160))
+    check('the quoted marker line is a real addition', markerDiff.patch.includes("+const isBinary = patch.includes('GIT binary patch')"), markerDiff.patch.slice(0, 200))
+    await git.unstage(dir, ['marker.txt'])
+    await rm(join(dir, 'marker.txt'), { force: true })
 
     await git.stage(dir, ['README.md'])
     const stagedPatch = await git.stagedPatch(dir)

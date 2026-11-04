@@ -187,7 +187,11 @@ function pairRows(rows) {
  * @param input - `{ path, file, staged, status, context }`.
  * @returns the parsed rows.
  */
+/** Which `openDiff` call is the latest: an older answer must not overwrite it. */
+let diffRequest = 0
+
 async function openDiff(input) {
+  const token = (diffRequest += 1)
   const context = input.context ?? gmgDiffState.context ?? 'full'
   setDiffState({
     target: input,
@@ -200,8 +204,13 @@ async function openDiff(input) {
   })
   try {
     const result = await callHost('diff', { path: input.path, file: input.file, staged: input.staged, context })
+    if (token !== diffRequest) return
     const patch = String(result?.patch ?? '')
-    if (result?.isBinary === true) {
+    // Decided from the patch, not from a flag: the marker is a whole line git
+    // prints itself, while a source line that merely quotes the words arrives
+    // with a `+` in front. Trusting a substring is how src/git.js was once
+    // reported as a binary file.
+    if (/^Binary files .* differ$/m.test(patch) || /^GIT binary patch$/m.test(patch)) {
       setDiffState({ loading: false, note: 'binary' })
       return
     }
@@ -212,6 +221,7 @@ async function openDiff(input) {
     const parsed = parsePatch(patch)
     setDiffState({ loading: false, context, rows: parsed.rows, pairs: parsed.pairs })
   } catch (error) {
+    if (token !== diffRequest) return
     setDiffState({ loading: false, error: String(error?.message ?? error) })
   }
 }
