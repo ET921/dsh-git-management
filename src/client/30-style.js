@@ -316,8 +316,19 @@ const PANEL_CSS = `
 .gmg-diffbody.is-split { min-width: 0; width: 100%; }
 .gmg-diffbody.is-split .gmg-diffrow.is-splitrow { grid-template-columns: 44px minmax(0, 1fr) 44px minmax(0, 1fr); }
 .gmg-diffbody.is-split .gmg-diff-cell { overflow: hidden; }
+/* Side-by-side tints each half, not the row: one row can carry a removal on
+   the left and an addition on the right, and the gutters belong to that half. */
+.gmg-diffbody.is-split .gmg-diff-cell.is-add,
+.gmg-diffbody.is-split .gmg-diff-no.is-add {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
+}
+.gmg-diffbody.is-split .gmg-diff-cell.is-del,
+.gmg-diffbody.is-split .gmg-diff-no.is-del {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+}
 .gmg-diffbody.is-split .gmg-diffrow.is-splitrow > .gmg-diff-no:nth-child(3) { border-left: 1px solid var(--dsw-alias-border-l1); }
-.gmg-diffbody.is-split .gmg-diff-cell.is-blank { background: var(--dsw-alias-bg-layer-1); }
+.gmg-diffbody.is-split .gmg-diff-cell.is-blank,
+.gmg-diffbody.is-split .gmg-diff-no.is-blank { background: var(--dsw-alias-bg-layer-1); }
 .gmg-diffbody.is-split .gmg-diff-cell.is-hunk { grid-column: 1 / -1; }
 
 /* ---- hover detail: three zones, each with its own surface ---- */

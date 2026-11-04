@@ -10,11 +10,21 @@
 
 /**
  * One gutter cell.
- * @param props - `{ value }`.
+ *
+ * The kind matters in side-by-side: a row can hold a removal on the left and an
+ * addition on the right, so each half has to carry its own colour — the row
+ * cannot. The number sits in that half's tint along with the text.
+ *
+ * @param props - `{ value, kind }`.
  * @returns the cell element.
  */
 function DiffGutter(props) {
-  return h('span', { className: 'gmg-diff-no' }, props.value === null || props.value === undefined ? '' : String(props.value))
+  const kind = props.kind ?? null
+  return h(
+    'span',
+    { className: kind === null ? 'gmg-diff-no' : `gmg-diff-no is-${kind}` },
+    props.value === null || props.value === undefined ? '' : String(props.value),
+  )
 }
 
 /**
@@ -76,9 +86,9 @@ function SplitDiff(props) {
       return h(
         'div',
         { className: 'gmg-diffrow is-splitrow', key: index },
-        h(DiffGutter, { value: left?.oldNo ?? null }),
+        h(DiffGutter, { value: left?.oldNo ?? null, kind: left?.kind ?? 'blank' }),
         h(DiffCell, { kind: left?.kind ?? 'blank', text: left?.text ?? '', clip: true }),
-        h(DiffGutter, { value: right?.newNo ?? null }),
+        h(DiffGutter, { value: right?.newNo ?? null, kind: right?.kind ?? 'blank' }),
         h(DiffCell, { kind: right?.kind ?? 'blank', text: right?.text ?? '', clip: true }),
       )
     }),

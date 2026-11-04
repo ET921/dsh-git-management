@@ -389,6 +389,22 @@ if (fileRow !== null) {
       check('split mode draws paired cells', diffContainer.querySelector('.gmg-diffbody.is-split') !== null)
     const splitRows = [...diffContainer.querySelectorAll('.gmg-diffrow.is-splitrow')].filter((row) => row.classList.contains('is-hunk') === false)
     check('every split row carries two gutters and two cells', splitRows.length > 0 && splitRows.every((row) => row.children.length === 4), splitRows.map((row) => row.children.length))
+    check(
+      'a removal keeps its red half in side-by-side',
+      splitRows.some((row) => row.children[0].classList.contains('is-del') && row.children[1].classList.contains('is-del')),
+      splitRows.map((row) => row.innerHTML.slice(0, 80)),
+    )
+    check(
+      'an addition keeps its green half in side-by-side',
+      splitRows.some((row) => row.children[2].classList.contains('is-add') && row.children[3].classList.contains('is-add')),
+      splitRows.map((row) => row.innerHTML.slice(0, 80)),
+    )
+    const splitCss = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
+    check(
+      'side-by-side halves are tinted by CSS',
+      splitCss.includes('.gmg-diffbody.is-split .gmg-diff-cell.is-add') && splitCss.includes('.gmg-diffbody.is-split .gmg-diff-no.is-del'),
+      splitCss.slice(0, 60),
+    )
     } else {
       check('a split toggle exists', false, diffContainer.querySelector('.gmg-diffhead')?.textContent)
     }
