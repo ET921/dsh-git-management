@@ -70,14 +70,30 @@ function useDetail(key, action, params) {
   return { detail, error }
 }
 
+/** The card's width band, in px. */
+const HOVER_WIDTH_MIN = 240
+const HOVER_WIDTH_MAX = 400
+
+/** How far the card's right edge stays from the column's left edge, in px. */
+const HOVER_GAP = 12
+
+/** How far the card stays from every window edge, in px. */
+const HOVER_MARGIN = 8
+
 /**
  * The floating layer.
  *
- * One direction, always: the card opens to the **left** of the row, its right
- * edge level with the row's left edge, so the panel and the row stay readable
- * and the card never sits under the pointer. Its size follows the content —
- * no cap to clip a line in half — and it only scrolls when the content is
- * taller than the window.
+ * One direction, always: the card opens in the gap to the **left** of the
+ * column, its right edge `HOVER_GAP` clear of the panel. The conversation
+ * behind that gap is the one surface it is allowed to cover — covering it is
+ * what keeps the rows it describes readable under the pointer, and a 320-400
+ * px column has nowhere else to put a card this size.
+ *
+ * Its height follows the content with no cap of ours: a long commit body is
+ * shown whole. Only the window bounds it — taller than the viewport, the card
+ * is pinned to the top edge and scrolls, with the head zone stuck there. When
+ * the window is too narrow for the card's width, the card narrows to the room
+ * it has instead of sliding sideways onto the rows.
  *
  * @param props - `{ anchor, onEnter, onLeave, children }`.
  * @returns the card, portalled when the module table allows it.
@@ -85,20 +101,37 @@ function useDetail(key, action, params) {
 function HoverLayer(props) {
   const ref = useRef(null)
   const [style, setStyle] = useState({ left: -9999, top: 0, visibility: 'hidden' })
-  useLayoutEffect(() => {
+  const place = () => {
     const element = ref.current
     if (element === null) return
     const anchor = props.anchor
-    const rect = element.getBoundingClientRect()
-    const width = Math.max(240, Math.min(420, rect.width || 360))
-    const height = rect.height
-    const fits = height <= window.innerHeight - 16
-    // Right edge on the row's left edge, then keep the whole card on screen
-    // when the window is too narrow for that.
-    const left = Math.max(8, Math.min(anchor.left - width - 12, window.innerWidth - width - 8))
-    const top = Math.max(8, Math.min(anchor.top, window.innerHeight - Math.min(height, window.innerHeight - 16) - 8))
-    setStyle({ left, top, width, ...(fits ? {} : { maxHeight: window.innerHeight - 16, overflowY: 'auto' }), visibility: 'visible' })
-  }, [props.anchor.left, props.anchor.top, props.anchor.right, props.anchor.bottom, props.anchor.width, props.children])
+    const edge = anchor.panelLeft ?? anchor.left
+    const viewportWidth = window.innerWidth
+    const viewportHeight = window.innerHeight
+    const room = Math.max(0, edge - HOVER_GAP - HOVER_MARGIN)
+    const wanted = Math.min(HOVER_WIDTH_MAX, Math.max(HOVER_WIDTH_MIN, Math.round(anchor.width) || 340))
+    // Width first, then measure: a wrapped body is as tall as the width it
+    // wraps at, so measuring before the width is applied counts the wrong
+    // number of lines and misjudges whether the card fits the window.
+    const width = room >= HOVER_WIDTH_MIN ? Math.min(wanted, room) : Math.min(wanted, viewportWidth - HOVER_MARGIN * 2)
+    element.style.width = `${width}px`
+    const measured = element.getBoundingClientRect().height
+    const fits = measured <= viewportHeight - HOVER_MARGIN * 2
+    setStyle({
+      left: Math.max(HOVER_MARGIN, edge - HOVER_GAP - width),
+      top: fits ? Math.max(HOVER_MARGIN, Math.min(anchor.top, viewportHeight - HOVER_MARGIN - measured)) : HOVER_MARGIN,
+      width,
+      visibility: 'visible',
+      ...(fits ? {} : { maxHeight: viewportHeight - HOVER_MARGIN * 2, overflowY: 'auto' }),
+    })
+  }
+  useLayoutEffect(place, [props.anchor.left, props.anchor.top, props.anchor.panelLeft, props.anchor.width, props.children])
+  // A window that changes size while a card is open moves the column with it;
+  // re-place instead of leaving the card sitting on the rows.
+  useEffect(() => {
+    window.addEventListener('resize', place)
+    return () => window.removeEventListener('resize', place)
+  })
   const card = h(
     'div',
     { ref, className: 'gmg-hover', style, onMouseEnter: props.onEnter, onMouseLeave: props.onLeave },
@@ -112,21 +145,18 @@ function HoverLayer(props) {
 const HOVER_ROW_SELECTOR = '.gmg-commit-row, .gmg-branch'
 
 /**
- * Wrap a row so that resting the pointer on it enlarges it.
+ * Wrap a row so that resting the pointer on it opens its card beside the column.
  *
- * Two shapes, because the two rows live in different containers:
+ * The wrapper measures two boxes before it arms the dwell timer: the row it
+ * describes, and the column the row sits in. The column's left edge is what
+ * the card hangs from, so the card leaves the list alone even when the row is
+ * indented, and the list never moves: the card is out of the layout.
  *
- * - `inline` (the history rows) grows *below the row, inside the list*. Nothing
- *   overlaps: the detail pushes the rows under it down instead of covering them,
- *   and the direction is always the same one.
- * - the branch pill sits in a horizontal bar where growing in place would shove
- *   its own buttons, so it keeps a small floating card.
+ * Leaving the row does not close the card at once: the pointer may be on its
+ * way into the card to scroll it. The close is postponed, and entering the
+ * card cancels that.
  *
- * Leaving the row does not close either at once: the pointer may be on its way
- * into the detail to scroll it. The close is postponed, and entering the detail
- * cancels that.
- *
- * @param props - `{ card, delay, inline, children }`.
+ * @param props - `{ card, delay, children }`.
  * @returns the wrapper element.
  */
 function HoverTarget(props) {
@@ -157,10 +187,14 @@ function HoverTarget(props) {
     const target = event.target
     const row = typeof target?.closest === 'function' ? target.closest(HOVER_ROW_SELECTOR) : null
     const box = row?.getBoundingClientRect?.()
+    // The panel's own box is the boundary the card hangs from: a row has
+    // padding, and the card must clear the panel, not just the row's text.
+    const panel = typeof row?.closest === 'function' ? row.closest('.gmg-root') : null
+    const panelBox = panel?.getBoundingClientRect?.()
     const next =
       box === undefined || box === null
-        ? { left: event.clientX, top: event.clientY, right: event.clientX, bottom: event.clientY, width: 320 }
-        : { left: box.left, top: box.top, right: box.right, bottom: box.bottom, width: box.width }
+        ? { left: event.clientX, top: event.clientY, panelLeft: event.clientX, width: 320 }
+        : { left: box.left, top: box.top, panelLeft: panelBox?.left ?? box.left, width: box.width }
     cancel()
     keepOpen()
     timer.current = window.setTimeout(() => setAnchor(next), props.delay ?? 280)
@@ -183,11 +217,7 @@ function HoverTarget(props) {
     'div',
     { className: 'gmg-hovertarget', onMouseEnter: enter, onMouseLeave: leave, onMouseDown: closeNow },
     props.children,
-    anchor === null
-      ? null
-      : props.inline === true
-        ? h('div', { className: 'gmg-inlinedetail', onMouseEnter: keepOpen, onMouseLeave: scheduleHide }, props.card)
-        : h(HoverLayer, { anchor, below: props.below === true, onEnter: keepOpen, onLeave: scheduleHide }, props.card),
+    anchor === null ? null : h(HoverLayer, { anchor, onEnter: keepOpen, onLeave: scheduleHide }, props.card),
   )
 }
 
@@ -281,7 +311,7 @@ function CommitHoverCard(props) {
       h('span', { className: 'gmg-hoverauthor' }, relativeTime(commit.date, currentLocale())),
     ),
     h('div', { className: 'gmg-hoverzone is-subject' }, commit.subject),
-    body === '' ? null : h('div', { className: 'gmg-hoverzone is-body' }, body.slice(0, 600)),
+    body === '' ? null : h('div', { className: 'gmg-hoverzone is-body' }, body),
     detail !== null
       ? h(CommitStatZone, { files: detail.files, additions: detail.additions, deletions: detail.deletions, t })
       : error === null

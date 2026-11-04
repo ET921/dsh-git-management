@@ -112,7 +112,19 @@ function respond(action, params) {
         repo: { fullName: 'acme/demo', description: 'demo', private: true, stars: 0, forks: 0, openIssues: 0, defaultBranch: 'main', htmlUrl: 'https://github.com/acme/demo' },
       }
     case 'commitDetail':
-      return { sha: 'deadbeefdeadbeef', short: 'deadbee', author: 'Ada', date: new Date().toISOString(), subject: 'wire the sidebar panel', body: 'A longer body line.', files: 2, additions: 10, deletions: 3 }
+      return {
+        sha: 'deadbeefdeadbeef',
+        short: 'deadbee',
+        author: 'Ada',
+        date: new Date().toISOString(),
+        subject: 'wire the sidebar panel',
+        // Longer than the card used to slice at: the tail proves nothing is
+        // truncated on the way to the DOM.
+        body: `A longer body line.\n\n${'Body line that keeps going, so the card has to grow rather than clip. '.repeat(8)}BODY-TAIL`,
+        files: 2,
+        additions: 10,
+        deletions: 3,
+      }
     case 'branchDetail':
       return { branch: 'main', exists: true, short: 'abc1234', author: 'Ada', date: new Date().toISOString(), subject: 'wire the sidebar panel', upstream: 'origin/main', track: null }
     case 'worktrees':
@@ -395,8 +407,20 @@ if (fileRow !== null) {
   check('a file row exists to click', false)
 }
 
-// Hovering a commit floats its card after the dwell delay.
+// Hovering a commit floats its card in the gap to the left of the column.
 // React derives onMouseEnter from mouseover, which is the event it listens for.
+// jsdom has no layout engine, so the two boxes the card is placed against are
+// stubbed: a 1440px-wide window whose source-control column sits at 1040..1400.
+const box = (left, top, width, height) => ({ left, top, right: left + width, bottom: top + height, width, height, x: left, y: top, toJSON: () => ({}) })
+const realRect = dom.window.Element.prototype.getBoundingClientRect
+dom.window.Element.prototype.getBoundingClientRect = function measure() {
+  const classes = this.classList
+  if (classes?.contains('gmg-hover')) return box(0, 0, 344, 420)
+  if (classes?.contains('gmg-commit-row')) return box(1048, 300, 344, 22)
+  if (classes?.contains('gmg-root')) return box(1040, 40, 360, 700)
+  return realRect.call(this)
+}
+
 const commitRow = container.querySelector('.gmg-commit-row')
 if (commitRow !== null) {
   await act(async () => {
@@ -405,9 +429,18 @@ if (commitRow !== null) {
   })
   const card = document.body.querySelector('.gmg-hover')
   const cardText = card?.textContent ?? ''
+  const cardLeft = Number.parseFloat(card?.style?.left ?? 'NaN')
+  const cardWidth = Number.parseFloat(card?.style?.width ?? 'NaN')
   check('resting on a commit floats a card', card !== null, container.innerHTML.slice(-240))
-  check('the card opens to the left of the column', Number.parseInt(card?.style?.left ?? '-1', 10) >= 0, card?.getAttribute('style'))
+  check(
+    "the card hangs off the column's left edge, not over the rows",
+    Number.isFinite(cardLeft) && Number.isFinite(cardWidth) && cardLeft >= 8 && cardLeft + cardWidth <= 1040 - 12 + 0.5,
+    card?.getAttribute('style'),
+  )
   check('the card height follows its content', (card?.style?.maxHeight ?? '') === '', card?.getAttribute('style'))
+  check('the whole commit body is rendered', cardText.includes('BODY-TAIL'), cardText.slice(-120))
+  const injectedCss = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
+  check('the CSS does not clip the body zone', !/\.gmg-hoverzone\.is-body\s*\{[^}]*max-height/.test(injectedCss), injectedCss.slice(0, 80))
   check('the card carries the commit subject', cardText.includes('wire the sidebar panel'), cardText.slice(0, 160))
   check('the author is the GitHub account, not git user.name', cardText.includes('EvT') && cardText.includes('Ada') === false, cardText.slice(0, 120))
   check('the card renders the commit body', cardText.includes('A longer body line.'), cardText.slice(0, 240))
@@ -421,6 +454,20 @@ if (commitRow !== null) {
   check('the ratio bar has two segments', card.querySelectorAll('.gmg-statbar span').length === 2)
   check('the card no longer links to GitHub', cardText.includes('GitHub') === false, cardText.slice(0, 240))
   check('the card fetches the commit stat', calls.some((call) => call.action === 'commitDetail'), calls.map((call) => call.action))
+
+  // A window shorter than the card pins it to the top edge and lets it scroll,
+  // instead of letting the bottom run past the viewport.
+  Object.defineProperty(dom.window, 'innerHeight', { configurable: true, value: 300 })
+  await act(async () => {
+    dom.window.dispatchEvent(new dom.window.Event('resize'))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  })
+  check(
+    'a card taller than the window is pinned to the top and scrolls',
+    card.style.maxHeight === '284px' && card.style.overflowY === 'auto' && card.style.top === '8px',
+    card.getAttribute('style'),
+  )
+  Object.defineProperty(dom.window, 'innerHeight', { configurable: true, value: 768 })
 } else {
   check('a commit row exists to hover', false)
 }

@@ -297,7 +297,7 @@ const PANEL_CSS = `
 
 .gmg-hover {
   position: fixed; z-index: 4000;
-  max-width: 400px; min-width: 260px;
+  max-width: 400px; min-width: 240px;
   padding: 0;
   border-radius: 10px;
   border: 1px solid var(--dsw-alias-border-l2);
@@ -332,7 +332,7 @@ const PANEL_CSS = `
   font-size: 11.5px; line-height: 1.6;
   color: var(--dsw-alias-label-primary);
   white-space: pre-wrap;
-  max-height: 240px; overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .gmg-hoverzone.is-foot {
   display: flex; flex-direction: column; gap: 6px;
