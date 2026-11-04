@@ -110,7 +110,7 @@ const zh = {
   worktreeBranchPreview: '將建立',
   worktreeRemoveConfirm: '移除工作樹 {path}？裡面未提交的內容會一併消失。',
   worktreeNone: '目前只有這一個工作樹。',
-  worktreeStale: '宿主端還是舊版（沒有工作樹 API）。重新載入頁面不會更新宿主，請重啟 DSH Desktop。',
+  worktreeStale: '宿主端還是舊版（沒有工作樹 API）。關視窗不會結束背景程序——請從選單或托盤「完全結束」DSH Desktop 再開。',
 }
 
 /** English copy. */
@@ -206,7 +206,7 @@ const en = {
   worktreeBranchPreview: 'Will create',
   worktreeRemoveConfirm: 'Remove worktree {path}? Uncommitted work inside it is lost.',
   worktreeNone: 'This is the only worktree.',
-  worktreeStale: 'The host is running an older build without the worktree API. Reloading the page cannot update it — restart DSH Desktop.',
+  worktreeStale: 'The host is still the older build (no worktree API). Closing the window keeps the background process alive — fully quit DSH Desktop and relaunch.',
 }
 
 /**

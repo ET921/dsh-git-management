@@ -899,17 +899,22 @@ function GithubCard(props) {
   const github = state.github
   const branch = state.status?.branch ?? null
 
-  // First look: resolve the remote and pull the repo facts once a token exists.
+  // Resolve the remote, then the repository facts, then the first pull list —
+  // each step needs the previous one's answer, and stopping at the repo facts
+  // left the Pull requests tab saying "reading…" until it was clicked.
   useEffect(() => {
     if (state.path === null) return
     if (github === null) {
       gitStore.loadGithub('repo')
       return
     }
-    if (github.connected === true && github.authorized === true && github.repo === undefined) {
+    if (github.connected !== true || github.authorized !== true) return
+    if (github.repo === undefined) {
       gitStore.loadGithub('repo')
+      return
     }
-  }, [state.path, github?.connected, github?.authorized])
+    if (github.pulls === undefined) gitStore.loadGithub('pulls')
+  }, [state.path, github?.connected, github?.authorized, github?.repo, github?.pulls])
 
   if (github === null) {
     return h('div', { className: 'gmg-card' }, h('div', { className: 'gmg-empty' }, t('githubLoading')))
