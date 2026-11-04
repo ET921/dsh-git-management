@@ -139,9 +139,44 @@ function HoverTarget(props) {
 }
 
 /**
- * The commit card: sha, author and age, the message with its body, and the
- * stat line in the wording the Source Control view has always used
- * ("N files changed, X insertions(+), Y deletions(-)").
+ * The stat line, split into three coloured pieces: how many files, how many
+ * lines added, how many removed. One interpolated sentence could not colour
+ * the numbers differently, and the numbers are the point.
+ *
+ * @param props - `{ files, additions, deletions, t }`.
+ * @returns the zone element.
+ */
+function CommitStatZone(props) {
+  const { files, additions, deletions, t } = props
+  const total = additions + deletions
+  const addedShare = total === 0 ? 0 : Math.round((additions / total) * 100)
+  return h(
+    'div',
+    { className: 'gmg-hoverzone is-foot' },
+    h(
+      'div',
+      { className: 'gmg-hoverstats' },
+      h('span', { className: 'gmg-stat-files' }, t('hoverStatFiles', { files })),
+      h('span', { className: 'gmg-stat-sep' }, t('hoverStatSeparator')),
+      h('span', { className: 'gmg-stat-add' }, t('hoverStatAdditions', { additions })),
+      h('span', { className: 'gmg-stat-sep' }, t('hoverStatSeparator')),
+      h('span', { className: 'gmg-stat-del' }, t('hoverStatDeletions', { deletions })),
+    ),
+    total === 0
+      ? null
+      : h(
+          'div',
+          { className: 'gmg-statbar', title: `${additions} / ${deletions}` },
+          h('span', { className: 'gmg-statbar-add', style: { width: `${addedShare}%` } }),
+          h('span', { className: 'gmg-statbar-del', style: { width: `${100 - addedShare}%` } }),
+        ),
+  )
+}
+
+/**
+ * The commit card: a tinted head (sha, author, age), the message zone with the
+ * subject and its body, and a foot zone carrying the stat line the Source
+ * Control view has always used ("N files changed, X insertions(+), Y deletions(-)").
  *
  * @param props - `{ commit, t }`.
  * @returns the card contents.
@@ -154,23 +189,26 @@ function CommitHoverCard(props) {
   return h(
     'div',
     { className: 'gmg-hovercard' },
-    h('div', { className: 'gmg-hoverhead' }, h('span', { className: 'gmg-sha' }, commit.short), h('span', { className: 'gmg-hoverauthor' }, `${commit.author} · ${relativeTime(commit.date, currentLocale())}`)),
-    h('div', { className: 'gmg-hoversubject' }, commit.subject),
-    body === '' ? null : h('div', { className: 'gmg-hoverbody' }, body.slice(0, 600)),
+    h(
+      'div',
+      { className: 'gmg-hoverzone is-head' },
+      h('span', { className: 'gmg-sha' }, commit.short),
+      h('span', { className: 'gmg-hoverauthor' }, commit.author),
+      h('span', { className: 'gmg-hoverdot' }, '·'),
+      h('span', { className: 'gmg-hoverauthor' }, relativeTime(commit.date, currentLocale())),
+    ),
+    h('div', { className: 'gmg-hoverzone is-subject' }, commit.subject),
+    body === '' ? null : h('div', { className: 'gmg-hoverzone is-body' }, body.slice(0, 600)),
     detail !== null
-      ? h(
-          'div',
-          { className: 'gmg-hoverstats' },
-          t('hoverStatLine', { files: detail.files, additions: detail.additions, deletions: detail.deletions }),
-        )
+      ? h(CommitStatZone, { files: detail.files, additions: detail.additions, deletions: detail.deletions, t })
       : error === null
-        ? h('div', { className: 'gmg-hoverstats' }, t('hoverLoading'))
+        ? h('div', { className: 'gmg-hoverzone is-foot' }, h('div', { className: 'gmg-hoverstats' }, t('hoverLoading')))
         : null,
   )
 }
 
 /**
- * The branch card.
+ * The branch card: the same three zones, with the upstream and the last commit.
  * @param props - `{ branch, t }`.
  * @returns the card contents.
  */
@@ -181,17 +219,49 @@ function BranchHoverCard(props) {
   if (detail === null) {
     // Either still reading, or a host that predates the action: the branch name
     // is already known, so the card is useful either way.
-    return h('div', { className: 'gmg-hovercard' }, h('div', { className: 'gmg-hoverhead' }, h(IconBranch, { size: 12 }), h('span', { className: 'gmg-hoversubject' }, branch)))
+    return h(
+      'div',
+      { className: 'gmg-hovercard' },
+      h('div', { className: 'gmg-hoverzone is-head' }, h(IconBranch, { size: 12 }), h('span', { className: 'gmg-hoversubject' }, branch)),
+    )
   }
   if (detail.exists === false) {
-    return h('div', { className: 'gmg-hovercard' }, h('div', { className: 'gmg-hoverhead' }, branch), h('div', { className: 'gmg-hoverstats' }, t('hoverNoBranch')))
+    return h(
+      'div',
+      { className: 'gmg-hovercard' },
+      h('div', { className: 'gmg-hoverzone is-head' }, h(IconBranch, { size: 12 }), h('span', { className: 'gmg-hoversubject' }, branch)),
+      h('div', { className: 'gmg-hoverzone is-foot' }, h('div', { className: 'gmg-hoverstats' }, t('hoverNoBranch'))),
+    )
   }
   return h(
     'div',
     { className: 'gmg-hovercard' },
-    h('div', { className: 'gmg-hoverhead' }, h(IconBranch, { size: 12 }), h('span', { className: 'gmg-hoversubject' }, branch), h('span', { className: 'gmg-sha' }, detail.short)),
-    h('div', { className: 'gmg-hoverstats' }, detail.upstream === null ? t('notPublished') : `${detail.upstream}${detail.track ? ` ${detail.track}` : ''}`),
-    h('div', { className: 'gmg-hoverbody' }, detail.subject),
-    h('div', { className: 'gmg-hoverstats' }, `${detail.author} · ${relativeTime(detail.date, currentLocale())}`),
+    h(
+      'div',
+      { className: 'gmg-hoverzone is-head' },
+      h(IconBranch, { size: 12 }),
+      h('span', { className: 'gmg-hoversubject' }, branch),
+      h('span', { className: 'gmg-sha' }, detail.short),
+    ),
+    h(
+      'div',
+      { className: 'gmg-hoverzone is-subject' },
+      branch,
+    ),
+    h(
+      'div',
+      { className: 'gmg-hoverzone is-body' },
+      h('div', { className: 'gmg-hoversubject' }, detail.subject),
+      h(
+        'div',
+        { className: 'gmg-hovertrack' },
+        detail.upstream === null ? t('notPublished') : `${detail.upstream}${detail.track ? ` ${detail.track}` : ''}`,
+      ),
+    ),
+    h(
+      'div',
+      { className: 'gmg-hoverzone is-foot' },
+      h('div', { className: 'gmg-hoverstats' }, `${detail.author} · ${relativeTime(detail.date, currentLocale())}`),
+    ),
   )
 }

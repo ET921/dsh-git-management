@@ -378,6 +378,13 @@ if (commitRow !== null) {
   check('the card carries the commit subject', cardText.includes('wire the sidebar panel'), cardText.slice(0, 160))
   check('the card renders the commit body', cardText.includes('A longer body line.'), cardText.slice(0, 240))
   check('the card carries the full stat line', /2 個檔案變更，10 行插入\(\+\)，3 行刪除\(-\)/.test(cardText), cardText.slice(0, 240))
+  check('the card is split into four zones', card.querySelectorAll('.gmg-hoverzone').length === 4, card.querySelectorAll('.gmg-hoverzone').length)
+  check('the subject has its own zone', card.querySelector('.gmg-hoverzone.is-subject')?.textContent?.includes('wire the sidebar panel') === true)
+  check('the head zone is marked', card.querySelector('.gmg-hoverzone.is-head') !== null)
+  check('the body zone is marked', card.querySelector('.gmg-hoverzone.is-body') !== null)
+  check('the foot zone is marked', card.querySelector('.gmg-hoverzone.is-foot') !== null)
+  check('insertions and deletions are coloured apart', card.querySelector('.gmg-stat-add') !== null && card.querySelector('.gmg-stat-del') !== null)
+  check('the ratio bar has two segments', card.querySelectorAll('.gmg-statbar span').length === 2)
   check('the card no longer links to GitHub', cardText.includes('GitHub') === false, cardText.slice(0, 240))
   check('the card fetches the commit stat', calls.some((call) => call.action === 'commitDetail'), calls.map((call) => call.action))
 } else {

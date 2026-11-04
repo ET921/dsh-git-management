@@ -289,26 +289,62 @@ const PANEL_CSS = `
 .gmg-diffbody.is-split .gmg-diff-cell.is-blank { background: var(--dsw-alias-bg-layer-1); }
 .gmg-diffbody.is-split .gmg-diff-cell.is-hunk { grid-column: 1 / -1; }
 
-/* ---- hover cards ---- */
+/* ---- hover cards: three zones, each with its own surface ---- */
 .gmg-hovertarget { display: contents; }
 .gmg-hover {
   position: fixed; z-index: 4000;
-  max-width: 380px; min-width: 240px;
-  padding: 10px 12px;
+  max-width: 400px; min-width: 260px;
+  padding: 0;
   border-radius: 10px;
   border: 1px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-bg-overlay);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, .38);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .42);
   font-size: 12px;
   pointer-events: none;
+  overflow: hidden;
 }
-.gmg-hovercard { display: flex; flex-direction: column; gap: 6px; }
-.gmg-hoverhead { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-secondary); min-width: 0; }
-.gmg-hoverauthor { font-family: var(--gmg-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmg-hovercard { display: flex; flex-direction: column; }
+.gmg-hoverzone { padding: 8px 11px; }
+.gmg-hoverzone.is-head {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+.gmg-hoverzone.is-head .gmg-sha {
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
+  color: var(--dsw-alias-brand-primary);
+}
+.gmg-hoverzone.is-subject {
+  padding: 9px 11px;
+  font-size: 13px; font-weight: 650; line-height: 1.45;
+  color: var(--dsw-alias-label-primary);
+}
+.gmg-hoverzone.is-body {
+  padding: 9px 11px 10px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-base) 45%, transparent);
+  font-size: 11.5px; line-height: 1.6;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  max-height: 240px; overflow: hidden;
+}
+.gmg-hoverzone.is-foot {
+  display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 65%, transparent);
+}
+.gmg-hoverauthor { font-family: var(--gmg-mono); font-size: 11px; color: var(--dsw-alias-label-primary); opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmg-hoverdot { color: var(--dsw-alias-label-primary); opacity: .45; }
 .gmg-hoversubject { font-weight: 600; font-size: 12.5px; line-height: 1.4; }
-.gmg-hoverbody { color: var(--dsw-alias-label-secondary); white-space: pre-wrap; max-height: 240px; overflow: hidden; font-size: 11.5px; line-height: 1.55; }
-.gmg-hoverstats { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--dsw-alias-label-secondary); font-size: 11.5px; }
-.gmg-hoverfoot { display: flex; align-items: center; gap: 5px; color: var(--dsw-alias-brand-primary); font-size: 11.5px; }
+
+.gmg-hovertrack { margin-top: 5px; font-family: var(--gmg-mono); font-size: 11px; color: var(--dsw-alias-label-primary); opacity: .8; }
+.gmg-hoverstats { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 11.5px; color: var(--dsw-alias-label-primary); opacity: .9; }
+.gmg-stat-sep { opacity: .45; }
+.gmg-stat-add { color: var(--dsw-alias-state-success-primary); font-family: var(--gmg-mono); }
+.gmg-stat-del { color: var(--dsw-alias-state-error-primary); font-family: var(--gmg-mono); }
+.gmg-statbar { display: flex; height: 3px; border-radius: 999px; overflow: hidden; background: var(--dsw-alias-bg-base); }
+.gmg-statbar-add { height: 100%; background: var(--dsw-alias-state-success-primary); }
+.gmg-statbar-del { height: 100%; background: var(--dsw-alias-state-error-primary); }
 
 /* ---- the right-sidebar tab: a ~320-420px column, not a page ---- */
 .gmg-root.is-compact .gmg-page { max-width: none; padding: 8px 8px 28px; gap: 8px; }
