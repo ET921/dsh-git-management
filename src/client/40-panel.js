@@ -103,7 +103,7 @@ function GitPanel(props) {
           title: t('refresh'),
           'aria-label': t('refresh'),
           disabled: state.path === null || busy !== null,
-          onClick: () => (isRepo ? gitStore.refresh() : gitStore.loadRepos()),
+          onClick: () => (isRepo ? gitStore.refreshAll() : gitStore.loadRepos()),
         },
         h(IconRefresh, { size: 15 }),
       ),
@@ -257,8 +257,189 @@ function GitPanel(props) {
   return h(
     'div',
     { className: `gmg-root${compact ? ' is-compact' : ''}` },
-    h('div', { className: 'gmg-page' }, header, ...notices, body, history, github),
+    h('div', { className: 'gmg-page' }, header, ...notices, body, h(WorktreeSection, { state, t, busy, isRepo }), history, github),
   )
+}
+
+/**
+ * Every checkout of this repository — the visual half of DSH's worktree story.
+ *
+ * The list is the one DSH's own worktree tool produces (and any the user made
+ * by hand), so a delegated Agent's checkout shows up beside the main tree with
+ * its branch, its dirty count, and three ways out: switch the panel to it, open
+ * it as a DSH workspace, or remove it.
+ *
+ * @param props - `{ state, t, busy, isRepo }`.
+ * @returns the section, or null when there is nothing to show.
+ */
+function WorktreeSection(props) {
+  const { state, t, busy, isRepo } = props
+  const [creating, setCreating] = useState(false)
+  const draft = state.worktreeDraft
+
+  if (!isRepo) return null
+
+  const data = state.worktrees
+  const rows = data?.worktrees ?? []
+  const rootKey = data?.rootKey ?? ''
+  const root = data?.root ?? ''
+  const currentKey = pathKey(state.path ?? '')
+  const canOpen = canOpenWorkspace()
+
+  const shorten = (row) => {
+    if (root !== '' && row.key.startsWith(rootKey) && row.key.length > rootKey.length) {
+      return row.path.slice(root.length).replace(/^[\\/]+/, '')
+    }
+    return row.path
+  }
+
+  const head = h(
+    'div',
+    { className: 'gmg-group-head' },
+    h(IconWorktree, { size: 13 }),
+    t('worktrees'),
+    h('span', { className: 'gmg-count' }, rows.length > 0 ? ` ${rows.length}` : ''),
+    h('span', { className: 'gmg-spacer' }),
+    h(
+      'button',
+      {
+        className: 'gmg-icon-btn',
+        type: 'button',
+        title: t('worktreePrune'),
+        'aria-label': t('worktreePrune'),
+        disabled: busy !== null,
+        onClick: () => gitStore.pruneWorktrees(),
+      },
+      h(IconScissors, { size: 13 }),
+    ),
+    h(
+      'button',
+      {
+        className: 'gmg-icon-btn',
+        type: 'button',
+        title: t('worktreeNew'),
+        'aria-label': t('worktreeNew'),
+        disabled: busy !== null,
+        onClick: () => setCreating((value) => !value),
+      },
+      h(IconPlus, { size: 13 }),
+    ),
+  )
+
+  const form = creating
+    ? h(
+        'form',
+        {
+          className: 'gmg-form',
+          onSubmit: (event) => {
+            event.preventDefault()
+            const name = draft.trim()
+            if (name === '') return
+            gitStore.createWorktree(name).then((ok) => {
+              if (ok) setCreating(false)
+            })
+          },
+        },
+        h('input', {
+          className: 'gmg-input',
+          autoFocus: true,
+          placeholder: t('worktreeNamePlaceholder'),
+          value: draft,
+          onChange: (event) => gitStore.setWorktreeDraft(event.target.value),
+        }),
+        draft.trim() === ''
+          ? h('div', { className: 'gmg-hint' }, t('worktreeLayoutHint'))
+          : h(
+              'div',
+              { className: 'gmg-hint' },
+              `${t('worktreeBranchPreview')}: worktree-${draft.trim()} · .agents/worktrees/${draft.trim()}`,
+            ),
+        h(
+          'div',
+          { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: () => setCreating(false) }, t('cancel')),
+          h('button', { className: 'gmg-btn is-primary', type: 'submit', disabled: busy !== null || draft.trim() === '' }, t('create')),
+        ),
+      )
+    : null
+
+  const body =
+    data === null
+      ? h('div', { className: 'gmg-empty' }, state.worktreeStale ? t('worktreeStale') : state.worktreeError ?? t('loading'))
+      : rows.length === 0
+        ? h('div', { className: 'gmg-empty' }, t('worktreeNone'))
+        : h(
+            'div',
+            { className: 'gmg-wts' },
+            rows.map((row) => {
+              const isCurrent = row.key === currentKey
+              const label = row.detached ? `${t('detached')} ${String(row.head ?? '').slice(0, 7)}` : row.branch ?? ''
+              return h(
+                'div',
+                { className: `gmg-wt${isCurrent ? ' is-current' : ''}`, key: row.key, title: row.path },
+                h('span', { className: 'gmg-wt-branch' }, h(IconBranch, { size: 12 }), h('span', { className: 'gmg-wt-name' }, label)),
+                row.main ? h('span', { className: 'gmg-wt-tag' }, t('worktreeMain')) : null,
+                row.locked ? h('span', { className: 'gmg-wt-tag' }, 'locked') : null,
+                row.prunable ? h('span', { className: 'gmg-wt-tag is-warn' }, 'prunable') : null,
+                isCurrent ? h('span', { className: 'gmg-wt-tag is-current' }, '●') : null,
+                h('span', { className: 'gmg-wt-path' }, shorten(row)),
+                h(
+                  'span',
+                  { className: `gmg-wt-dirty${row.dirtyKnown && row.dirty > 0 ? ' is-dirty' : ''}` },
+                  row.dirtyKnown ? (row.dirty === 0 ? t('worktreeClean') : String(row.dirty)) : '—',
+                ),
+                h(
+                  'span',
+                  { className: 'gmg-actions' },
+                  h(
+                    'button',
+                    {
+                      className: 'gmg-icon-btn',
+                      type: 'button',
+                      title: t('worktreeSwitch'),
+                      'aria-label': t('worktreeSwitch'),
+                      disabled: isCurrent || busy !== null,
+                      onClick: () => gitStore.focusWorktree(row.path),
+                    },
+                    h(IconChevronRight, { size: 13 }),
+                  ),
+                  canOpen
+                    ? h(
+                        'button',
+                        {
+                          className: 'gmg-icon-btn',
+                          type: 'button',
+                          title: t('worktreeOpen'),
+                          'aria-label': t('worktreeOpen'),
+                          disabled: busy !== null || row.prunable,
+                          onClick: () => gitStore.openWorktreeInDsh(row.path),
+                        },
+                        h(IconExternal, { size: 13 }),
+                      )
+                    : null,
+                  row.main || isCurrent
+                    ? null
+                    : h(
+                        'button',
+                        {
+                          className: 'gmg-icon-btn',
+                          type: 'button',
+                          title: t('worktreeRemove'),
+                          'aria-label': t('worktreeRemove'),
+                          disabled: busy !== null || row.prunable,
+                          onClick: () => {
+                            if (!window.confirm(t('worktreeRemoveConfirm', { path: row.path }))) return
+                            gitStore.removeWorktree(row.path)
+                          },
+                        },
+                        h(IconClose, { size: 13 }),
+                      ),
+                ),
+              )
+            }),
+          )
+
+  return h('div', { className: 'gmg-group' }, head, body, form)
 }
 
 /**

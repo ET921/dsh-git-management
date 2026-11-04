@@ -231,6 +231,30 @@ const PANEL_CSS = `
 .gmg-kbd { font-family: var(--gmg-mono); font-size: 10.5px; padding: 0 4px; border-radius: 4px; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); }
 .gmg-scroll-cap { max-height: 320px; overflow: auto; }
 
+/* ---- worktrees ---- */
+.gmg-wts { display: flex; flex-direction: column; }
+.gmg-wt {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 10px 5px 12px;
+  min-height: 28px;
+  font-size: 12px;
+}
+.gmg-wt:hover { background: var(--dsw-alias-bg-layer-2); }
+.gmg-wt.is-current { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 8%, transparent); }
+.gmg-wt-branch { display: inline-flex; align-items: center; gap: 4px; color: var(--dsw-alias-label-primary); flex: none; max-width: 44%; }
+.gmg-wt-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--gmg-mono); font-size: 11.5px; }
+.gmg-wt-tag {
+  flex: none; font-size: 10px; line-height: 1.6; padding: 0 5px; border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary);
+}
+.gmg-wt-tag.is-warn { color: var(--dsw-alias-state-warn-primary); border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 45%, transparent); }
+.gmg-wt-tag.is-current { color: var(--dsw-alias-brand-primary); border-color: transparent; padding: 0 2px; }
+.gmg-wt-path { flex: 1; min-width: 0; color: var(--dsw-alias-label-secondary); opacity: .8; font-family: var(--gmg-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmg-wt-dirty { flex: none; font-family: var(--gmg-mono); font-size: 11px; color: var(--dsw-alias-label-secondary); }
+.gmg-wt-dirty.is-dirty { color: var(--dsw-alias-state-warn-primary); }
+.gmg-wt .gmg-actions { opacity: 0; }
+.gmg-wt:hover .gmg-actions, .gmg-wt:focus-within .gmg-actions { opacity: 1; }
+
 /* ---- the right-sidebar tab: a ~320-420px column, not a page ---- */
 .gmg-root.is-compact .gmg-page { max-width: none; padding: 8px 8px 28px; gap: 8px; }
 .gmg-root.is-compact .gmg-head { gap: 8px; align-items: center; padding: 2px 2px 0; }
@@ -253,6 +277,8 @@ const PANEL_CSS = `
 .gmg-root.is-compact .gmg-gh-head { padding: 9px; gap: 8px; }
 .gmg-root.is-compact .gmg-gh-desc { padding: 0 9px 9px !important; }
 .gmg-root.is-compact .gmg-commit-row { padding: 6px 9px; gap: 7px; }
+.gmg-root.is-compact .gmg-wt { padding: 5px 6px 5px 8px; gap: 5px; }
+.gmg-root.is-compact .gmg-wt-path { display: none; }
 .gmg-root.is-compact .gmg-meta { display: none; }
 `
 

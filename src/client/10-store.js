@@ -26,6 +26,14 @@ function initialState() {
     log: [],
     /** `{ current, branches }` from `git for-each-ref`. */
     branches: null,
+    /** Every checkout of the repository; see the `worktrees` action. */
+    worktrees: null,
+    /** Failure of the last worktree read, kept apart from the panel's notice. */
+    worktreeError: null,
+    /** True when the host half predates this action (the plugin needs a restart). */
+    worktreeStale: false,
+    /** Draft name in the create-worktree form. */
+    worktreeDraft: '',
     /** GitHub view state; see `loadGithub`. */
     github: null,
     /** Busy label, e.g. `commit`, or null. */
@@ -126,6 +134,9 @@ function createGitStore() {
       status: null,
       log: [],
       branches: null,
+      worktrees: null,
+      worktreeError: null,
+      worktreeStale: false,
       github: null,
       expanded: {},
       diffs: {},
@@ -133,6 +144,7 @@ function createGitStore() {
       notice: null,
     })
     await refresh(mine)
+    if (mine === epoch) await loadWorktrees()
   }
 
   /**
@@ -152,6 +164,101 @@ function createGitStore() {
     // A refresh is the moment stale diff panes should be re-read, not cleared.
     const open = Object.keys(state.expanded)
     if (open.length > 0) await Promise.all(open.map((file) => loadDiff(file, state.expanded[file] === 'staged')))
+  }
+
+  /**
+   * Read the repository's worktrees.
+   *
+   * Kept out of the 8-second poll on purpose: each row costs a `git status`,
+   * and the list only changes when the user (or an Agent) makes a checkout.
+   */
+  async function loadWorktrees() {
+    const path = state.path
+    if (path === null) return
+    try {
+      const result = await callHost('worktrees', { path })
+      if (path !== state.path) return
+      set({ worktrees: result, worktreeError: null, worktreeStale: false })
+    } catch (error) {
+      if (path !== state.path) return
+      const message = String(error?.message ?? error)
+      // A host half that predates the action answers 404 "unknown action": the
+      // page is newer than the process, which only a restart settles.
+      set({ worktrees: null, worktreeError: message, worktreeStale: /unknown action/i.test(message) })
+    }
+  }
+
+  /** Re-read status, history and the worktree list (the header's refresh). */
+  async function refreshAll() {
+    await refresh()
+    await loadWorktrees()
+  }
+
+  /**
+   * Create a worktree under `<repo>/.agents/worktrees/<name>` on branch
+   * `worktree-<name>`.
+   * @param name - the worktree name.
+   * @returns true when it was created.
+   */
+  async function createWorktree(name) {
+    if (state.path === null) return false
+    const done = await task('worktree', () => callHost('createWorktree', { path: state.path, name }))
+    if (done === undefined) return false
+    set({ worktreeDraft: '', notice: `${done.branch} → ${done.path}` })
+    await loadWorktrees()
+    return true
+  }
+
+  /**
+   * Remove one worktree directory.
+   * @param target - the worktree path.
+   * @returns true when it was removed.
+   */
+  async function removeWorktree(target) {
+    if (state.path === null) return false
+    const done = await task('worktree', () => callHost('removeWorktree', { path: state.path, target }))
+    if (done === undefined) return false
+    set({ notice: done.summary })
+    await loadWorktrees()
+    return true
+  }
+
+  /** Drop stale worktree records (`git worktree prune`). */
+  async function pruneWorktrees() {
+    if (state.path === null) return
+    const done = await task('worktree', () => callHost('pruneWorktrees', { path: state.path }))
+    if (done === undefined) return
+    set({ notice: done.summary })
+    await loadWorktrees()
+  }
+
+  /**
+   * Point the panel at another worktree.
+   * @param target - that worktree's directory.
+   */
+  async function focusWorktree(target) {
+    if (pathKey(target) === pathKey(state.path ?? '')) return
+    await selectRepo(target)
+  }
+
+  /**
+   * Create (or reuse) a DSH workspace for one worktree and open it.
+   * @param target - that worktree's directory.
+   * @returns true when a workspace was opened.
+   */
+  async function openWorktreeInDsh(target) {
+    if (!canOpenWorkspace()) {
+      set({ error: '這個 GUI 沒有提供工作區服務 / workspace services unavailable' })
+      return false
+    }
+    try {
+      const opened = await openAsWorkspace(target)
+      set({ notice: opened?.title ? `已開啟工作區：${opened.title}` : null })
+      return true
+    } catch (error) {
+      set({ error: String(error?.message ?? error) })
+      return false
+    }
   }
 
   /**
@@ -334,6 +441,13 @@ function createGitStore() {
     loadRepos,
     selectRepo,
     refresh,
+    refreshAll,
+    loadWorktrees,
+    createWorktree,
+    removeWorktree,
+    pruneWorktrees,
+    focusWorktree,
+    openWorktreeInDsh,
     toggleFile,
     fileAction,
     stageAll,
@@ -347,6 +461,7 @@ function createGitStore() {
     createPull,
     saveToken,
     setMessage: (message) => set({ message }),
+    setWorktreeDraft: (value) => set({ worktreeDraft: value }),
     setFlag: (flag, value) => set({ [flag]: value }),
     dismiss: () => set({ error: null, notice: null }),
   }

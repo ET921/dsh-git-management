@@ -44,6 +44,7 @@
 - **行內差異**：點檔案展開 unified diff，`+`/`-`/hunk 上色。
 - **歷史**：最近提交（sha、主旨、作者、相對時間），可展開全部。
 - **GitHub**：遠端解析（ssh/https 皆可）、星標/復刻/issue 數、在瀏覽器開啟、PR 清單、Issue 清單、從目前分支建立 PR。
+- **工作樹**：列出這份 repo 的所有 checkout（含 DSH 自己的 `.agents/worktrees/*` 與你手動加的），每列顯示分支、相對路徑、髒污計數與 `主` 標記；可以一鍵把面板切過去、開成 DSH 工作區、或在確認後移除。見 [docs/worktrees.md](docs/worktrees.md)。
 - **多工作區**：下拉切換 DSH 工作區（自動記住上次選擇；非 Git 目錄提供「初始化倉庫」）。
 
 ## 三、故意沒做的事（以及原因）
@@ -87,8 +88,8 @@ C:\Users\user\AppData\Roaming\dsh-desktop\harness\profiles\web\
 
 ```bash
 npm run build        # 產出 lib/
-npm run verify       # 42 項：Git 引擎 + 動作表 + 打包檢查（真的開一個臨時 repo 跑）
-npm run test:render  # 27 項：jsdom + 真的 React，把 lib/client.js 掛起來渲染面板
+npm run verify       # 59 項：Git 引擎 + 動作表（含 worktree add/list/remove/prune）+ 打包檢查
+npm run test:render  # 33 項：jsdom + 真的 React，把 lib/client.js 掛起來渲染面板
 ```
 
 - `scripts/verify.mjs`：對真的 `git` 二進位驗證 status/stage/commit/diff/log/branches/remote 與錯誤處理，含路徑有空白的檔案。
@@ -112,6 +113,8 @@ scripts/
   build.mjs         無 bundler：ESM 直送 + ModuleLoader 包裝
   verify.mjs        Git 引擎驗證
   render-test.mjs   jsdom 渲染驗證
+docs/
+  worktrees.md      工作樹功能的設計與取捨（含被 grill 的問題）
 ```
 
 ## 七、已知邊界

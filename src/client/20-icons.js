@@ -159,3 +159,19 @@ const IconLock = makeIcon([
   h('rect', { key: 'a', x: 3.4, y: 7, width: 9.2, height: 6.6, rx: 1.4 }),
   h('path', { key: 'b', d: 'M5.6 7V5.2a2.4 2.4 0 0 1 4.8 0V7' }),
 ])
+
+/** A second checkout hanging off the repository: the worktree section's mark. */
+const IconWorktree = makeIcon([
+  h('circle', { key: 'a', cx: 4.2, cy: 3.4, r: 1.6 }),
+  h('circle', { key: 'b', cx: 4.2, cy: 12.6, r: 1.6 }),
+  h('path', { key: 'c', d: 'M4.2 5v6' }),
+  h('rect', { key: 'd', x: 8.6, y: 5.4, width: 5.2, height: 5.2, rx: 1.2 }),
+])
+
+/** Prune: stale records cut away. */
+const IconScissors = makeIcon([
+  h('circle', { key: 'a', cx: 4, cy: 4, r: 1.6 }),
+  h('circle', { key: 'b', cx: 4, cy: 12, r: 1.6 }),
+  h('path', { key: 'c', d: 'M5.2 5.2 13 12.4' }),
+  h('path', { key: 'd', d: 'M5.2 10.8 13 3.6' }),
+])

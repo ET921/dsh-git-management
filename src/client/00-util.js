@@ -127,6 +127,47 @@ async function callHost(action, params = {}) {
 }
 
 /**
+ * A comparable form of one filesystem path: forward slashes, no trailing
+ * slash, folded case — the same rule the host applies when it matches a
+ * worktree row against the panel's current directory.
+ * @param path - the raw path.
+ * @returns the comparable key.
+ */
+function pathKey(path) {
+  return String(path ?? '')
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+}
+
+/**
+ * The bridge to the client's workspace services, installed by the plugin.
+ *
+ * Opening a worktree "as a workspace" needs `ctx.workspaces` + `ctx.uiWorkspace`,
+ * which only the plugin's apply sees; components reach it through this slot
+ * instead of receiving services as props.
+ */
+let gmgWorkspaceBridge = null
+
+/**
+ * Whether this GUI can open a directory as a workspace.
+ * @returns true when the bridge is installed.
+ */
+function canOpenWorkspace() {
+  return gmgWorkspaceBridge !== null
+}
+
+/**
+ * Create (idempotently) and open a workspace for one directory.
+ * @param path - the directory.
+ * @returns the workspace view, or null when unavailable.
+ */
+async function openAsWorkspace(path) {
+  if (gmgWorkspaceBridge === null) return null
+  return gmgWorkspaceBridge(path)
+}
+
+/**
  * Split a repository-relative path into the file name and its directory.
  * @param path - repository-relative path.
  * @returns `{ name, dir }`.

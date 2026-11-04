@@ -97,6 +97,20 @@ const zh = {
   baseBranch: '目标分支',
   cancel: '取消',
   createPull: '创建',
+  worktrees: '工作樹',
+  worktreeMain: '主',
+  worktreeClean: 'clean',
+  worktreeSwitch: '把面板切到此工作樹',
+  worktreeOpen: '在 DSH 開成工作區',
+  worktreeRemove: '移除工作樹',
+  worktreeNew: '新增工作樹',
+  worktreePrune: '清理失效記錄（git worktree prune）',
+  worktreeNamePlaceholder: '名稱，例如 fix-ui',
+  worktreeLayoutHint: '會建立在 .agents/worktrees/<名稱>，分支 worktree-<名稱>',
+  worktreeBranchPreview: '將建立',
+  worktreeRemoveConfirm: '移除工作樹 {path}？裡面未提交的內容會一併消失。',
+  worktreeNone: '目前只有這一個工作樹。',
+  worktreeStale: '宿主端還是舊版（沒有工作樹 API）。重新載入頁面不會更新宿主，請重啟 DSH Desktop。',
 }
 
 /** English copy. */
@@ -179,6 +193,20 @@ const en = {
   baseBranch: 'base branch',
   cancel: 'Cancel',
   createPull: 'Create',
+  worktrees: 'Worktrees',
+  worktreeMain: 'main',
+  worktreeClean: 'clean',
+  worktreeSwitch: 'Point the panel at this worktree',
+  worktreeOpen: 'Open as a DSH workspace',
+  worktreeRemove: 'Remove worktree',
+  worktreeNew: 'New worktree',
+  worktreePrune: 'Prune stale records',
+  worktreeNamePlaceholder: 'name, e.g. fix-ui',
+  worktreeLayoutHint: 'Created at .agents/worktrees/<name> on branch worktree-<name>',
+  worktreeBranchPreview: 'Will create',
+  worktreeRemoveConfirm: 'Remove worktree {path}? Uncommitted work inside it is lost.',
+  worktreeNone: 'This is the only worktree.',
+  worktreeStale: 'The host is running an older build without the worktree API. Reloading the page cannot update it — restart DSH Desktop.',
 }
 
 /**
@@ -320,6 +348,17 @@ exports.apply = function apply(ctx) {
       console.log('[dsh-git-management] source control tab registered (sidebar.right.pane.tab)')
     } catch (error) {
       console.error('[dsh-git-management] mount failed:', error)
+    }
+  })
+
+  // The worktree rows' "open as a workspace" action: create the workspace
+  // (idempotent per canonical path) and hand the user to it. Optional services,
+  // so a GUI without them simply renders the action as unavailable.
+  ctx.inject(['workspaces', 'uiWorkspace'], (scoped) => {
+    gmgWorkspaceBridge = async (path) => {
+      const view = await scoped.workspaces.create({ path })
+      await scoped.uiWorkspace.openWorkspace(view.id)
+      return view
     }
   })
 }

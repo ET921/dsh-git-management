@@ -189,6 +189,63 @@ console.log('\n# git engine against a real repository')
     check('switched to new branch', snapshot.branch === 'feature/panel', snapshot.branch)
     check('branch list grew', (await git.branches(dir)).branches.length === 2)
 
+    // ---- worktrees --------------------------------------------------------
+    const initial = await actions.handle('worktrees', { path: dir })
+    check('one worktree before adding', initial.worktrees?.length === 1, initial)
+    check('the first row is the main worktree', initial.worktrees?.[0]?.main === true, initial.worktrees)
+
+    const createdWorktree = await actions.handle('createWorktree', { path: dir, name: 'panel' })
+    check('createWorktree names the branch worktree-panel', createdWorktree.branch === 'worktree-panel', createdWorktree)
+    check('createWorktree lands under .agents/worktrees', String(createdWorktree.path).replace(/\\/g, '/').endsWith('/.agents/worktrees/panel'), createdWorktree.path)
+    check('the checkout exists on disk', existsSync(createdWorktree.path) === true)
+
+    let listed = await actions.handle('worktrees', { path: dir })
+    check('two worktrees after adding', listed.worktrees.length === 2, listed.worktrees)
+    const added = listed.worktrees.find((row) => row.main !== true)
+    check('the added worktree reports its branch', added?.branch === 'worktree-panel', added)
+    check('a fresh worktree counts as clean', added?.dirty === 0 && added?.dirtyKnown === true, added)
+    check('the repository root is reported', typeof listed.root === 'string' && listed.root !== '', listed.root)
+
+    // A tracked modification is what the badge counts; an untracked file is not.
+    await writeFile(join(added.path, 'README.md'), '# fixture\n\nchanged in the worktree\n')
+    await writeFile(join(added.path, 'untracked.txt'), 'ignored by the badge\n')
+    listed = await actions.handle('worktrees', { path: dir })
+    const dirty = listed.worktrees.find((row) => row.main !== true)
+    check('dirty count sees the tracked edit only', dirty?.dirty === 1, dirty)
+
+    const traversal = await actions.handle('createWorktree', { path: dir, name: '../evil' }).then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+    equal('a traversing worktree name is refused', traversal, 'rejected')
+
+    const removeMain = await actions.handle('removeWorktree', { path: dir, target: dir }).then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+    equal('removing the main worktree is refused', removeMain, 'rejected')
+
+    const removeInUse = await actions.handle('removeWorktree', { path: added.path, target: added.path }).then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+    equal('removing the worktree the panel is in is refused', removeInUse, 'rejected')
+
+    const removeDirty = await actions.handle('removeWorktree', { path: dir, target: added.path }).then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+    equal('removing a dirty worktree is refused by git', removeDirty, 'rejected')
+
+    await exec(added.path, ['restore', '--', 'README.md'])
+    await exec(added.path, ['clean', '-fd'])
+    const removedWorktree = await actions.handle('removeWorktree', { path: dir, target: added.path })
+    check('removeWorktree returns the fresh list', Array.isArray(removedWorktree.worktrees) && removedWorktree.worktrees.length === 1, removedWorktree)
+    check('the removed checkout is gone from disk', existsSync(added.path) === false)
+
+    const pruned = await actions.handle('pruneWorktrees', { path: dir })
+    check('pruneWorktrees returns the list', Array.isArray(pruned.worktrees), pruned)
+
     await exec(dir, ['remote', 'add', 'origin', 'https://github.com/example/fixture.git'])
     const remote = await git.remote(dir)
     equal('origin parsed', remote?.slug, 'example/fixture')

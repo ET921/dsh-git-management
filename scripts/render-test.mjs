@@ -84,6 +84,17 @@ function respond(action) {
       return { file: 'src/App.tsx', staged: true, patch: 'diff --git a/src/App.tsx b/src/App.tsx\n@@ -1 +1,2 @@\n-old\n+new\n+more', isBinary: false }
     case 'github':
       return { connected: true, authorized: false, reason: 'no-token', remote: { host: 'github.com', owner: 'acme', repo: 'demo', slug: 'acme/demo', webUrl: 'https://github.com/acme/demo', remoteUrl: 'git@github.com:acme/demo.git' } }
+    case 'worktrees':
+      return {
+        isRepo: true,
+        root: 'C:/demo',
+        rootKey: 'c:/demo',
+        truncated: false,
+        worktrees: [
+          { path: 'C:/demo', key: 'c:/demo', branch: 'main', head: 'abc1234', main: true, detached: false, bare: false, locked: false, prunable: false, dirty: 3, dirtyKnown: true },
+          { path: 'C:/demo/.agents/worktrees/fix-ui', key: 'c:/demo/.agents/worktrees/fix-ui', branch: 'worktree-fix-ui', head: 'def5678', main: false, detached: false, bare: false, locked: false, prunable: false, dirty: 0, dirtyKnown: true },
+        ],
+      }
     default:
       return {}
   }
@@ -245,6 +256,18 @@ check('history subject is rendered', text().includes('wire the sidebar panel'), 
 check('github card names the remote', text().includes('acme/demo'), text().slice(0, 600))
 check('token hint is offered when unauthorized', text().includes('个人访问令牌'), text().slice(-400))
 check('no error notice is shown', container.querySelector('.gmg-notice.is-error') === null, container.querySelector('.gmg-notice.is-error')?.textContent)
+
+// The worktree block: both checkouts, the main tag, and the dirty badge.
+check('worktree section renders', text().includes('工作樹'), text().slice(0, 900))
+check('the secondary worktree is listed', text().includes('worktree-fix-ui'), text().slice(0, 900))
+check('the main worktree is tagged', text().includes('主'), text().slice(0, 900))
+check('the current worktree is marked', container.querySelector('.gmg-wt.is-current') !== null)
+check(
+  'the dirty badge shows the tracked count',
+  container.querySelector('.gmg-wt-dirty.is-dirty')?.textContent === '3',
+  container.querySelector('.gmg-wt-dirty')?.textContent,
+)
+check('a clean worktree says so', container.querySelectorAll('.gmg-wt').length === 2)
 
 // Opening one file asks for its diff and draws the coloured lines.
 const fileRow = container.querySelector('.gmg-file')
