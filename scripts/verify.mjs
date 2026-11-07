@@ -420,7 +420,7 @@ console.log('\n# commit diff (one history row → one tab)')
     await exec(dir, ['config', 'commit.gpgsign', 'false'])
 
     await writeFile(join(dir, 'README.md'), '# fixture\nfirst line\nsecond line\n')
-    await writeFile(join(dir, 'name with space.txt'), 'spaces are fine\n')
+    await writeFile(join(dir, 'name with space.txt'), 'spaces are fine\nsecond line\nthird line\n')
     await writeFile(join(dir, 'b[br]acket.txt'), 'weird name\n')
     await writeFile(join(dir, 'bin.dat'), Buffer.from([0, 1, 2, 3]))
     await exec(dir, ['add', '-A'])
@@ -463,8 +463,9 @@ console.log('\n# commit diff (one history row → one tab)')
     check('the changed line is in the patch', longPatch.includes('+line-40 changed'), longPatch)
     check('the rest of the file is not', longPatch.includes('line-01') === false && longPatch.includes('line-60') === false, longPatch.slice(0, 200))
 
-    // Rename, delete and a binary edit in one commit.
+    // Rename (with an edit), delete and a binary edit in one commit.
     await exec(dir, ['mv', 'name with space.txt', 'renamed file.txt'])
+    await writeFile(join(dir, 'renamed file.txt'), 'spaces are still fine\nsecond line\nthird line\n')
     await rm(join(dir, 'b[br]acket.txt'), { force: true })
     await writeFile(join(dir, 'bin.dat'), Buffer.from([9, 9, 9, 9]))
     await exec(dir, ['add', '-A'])
@@ -474,9 +475,20 @@ console.log('\n# commit diff (one history row → one tab)')
     const renamed = mixed.files.find((file) => file.path === 'renamed file.txt')
     check('a rename stays one file with its old path', renamed?.status === 'R' && renamed?.oldPath === 'name with space.txt', renamed)
     check('the rename patch says so', renamed?.patch.includes('rename from name with space.txt'), renamed?.patch)
+    check('a rename with edits keeps its hunks', renamed?.patch.includes('+spaces are still fine'), renamed?.patch)
     check('a deletion keeps its own status', mixed.files.find((file) => file.path === 'b[br]acket.txt')?.status === 'D', mixed.files.map((file) => `${file.path}:${file.status}`))
     check('a modified binary stays flagged', mixed.files.find((file) => file.path === 'bin.dat')?.binary === true, mixed.files)
-    check('the stat line covers the whole commit', mixed.additions === 0 && mixed.deletions === 1, { additions: mixed.additions, deletions: mixed.deletions })
+    check('the stat line covers the whole commit', mixed.additions === 1 && mixed.deletions === 2, { additions: mixed.additions, deletions: mixed.deletions })
+
+    // A chmod-only commit: the patch carries no hunk, and the tab says what
+    // changed rather than "no textual difference".
+    await exec(dir, ['update-index', '--chmod=+x', 'long.txt'])
+    await exec(dir, ['commit', '-m', 'make long.txt executable'])
+    const modeSha = await revParse()
+    const mode = await actions.handle('commitDiff', { path: dir, sha: modeSha })
+    check('a mode-only change is still a file row', mode.total === 1 && mode.files[0]?.path === 'long.txt', mode.files)
+    check('the mode change is in the patch', /^old mode 100644$/m.test(mode.files[0]?.patch ?? '') && /^new mode 100755$/m.test(mode.files[0]?.patch ?? ''), mode.files[0]?.patch)
+    check('a mode-only change has no line counts', mode.additions === 0 && mode.deletions === 0, mode)
 
     // A merge is the first-parent change, exactly like the hover card's stat.
     await exec(dir, ['switch', '-c', 'side'])

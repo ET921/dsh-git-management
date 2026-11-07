@@ -160,6 +160,7 @@ const zh = {
   commitDiffBinaryBadge: '二進位',
   commitDiffBinary: '二進位檔，不顯示差異。',
   commitDiffNoText: '沒有文字差異。',
+  commitDiffModeOnly: '只改了檔案權限（mode），內容沒有變。',
   commitDiffFileCount: '{files} 個檔案',
   commitDiffMergeBadge: '合併',
   commitDiffExpandAll: '展開全部',
@@ -305,6 +306,7 @@ const en = {
   commitDiffBinaryBadge: 'binary',
   commitDiffBinary: 'Binary file; no textual diff.',
   commitDiffNoText: 'No textual difference.',
+  commitDiffModeOnly: 'Only the file mode changed; the contents did not.',
   commitDiffFileCount: '{files} files',
   commitDiffMergeBadge: 'merge',
   commitDiffExpandAll: 'Expand all',
@@ -423,6 +425,10 @@ function CommitPanelSeat(props) {
   const key = path === null || sha === null ? null : commitViewKey(path, sha)
   const view = useCommitView(key)
 
+  // While this tab is on screen its entry is pinned, so the cache trim cannot
+  // evict the commit a reader is looking at.
+  useEffect(() => pinCommitView(key), [key])
+
   useEffect(() => {
     if (path !== null && sha !== null) loadCommitDiff({ path, sha })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the revision is the
@@ -443,7 +449,9 @@ function CommitPanelSeat(props) {
     if (path !== null && sha !== null) loadCommitDiff({ path, sha })
   }
 
-  return h(CommitDiffPanel, { ...props, params, view, onClose: close, onRetry: retry })
+  // A tab that is not the visible one in a split strip must not answer Escape.
+  const active = info?.tab?.visible !== false
+  return h(CommitDiffPanel, { ...props, params, view, active, onClose: close, onRetry: retry })
 }
 
 /**

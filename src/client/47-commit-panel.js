@@ -69,7 +69,8 @@ function CommitFileBlock(props) {
 
   let body = null
   if (hasText === false) {
-    body = h('div', { className: 'gmg-cdiff-note' }, file.binary ? t('commitDiffBinary') : t('commitDiffNoText'))
+    const note = file.binary ? t('commitDiffBinary') : file.modeOnly ? t('commitDiffModeOnly') : t('commitDiffNoText')
+    body = h('div', { className: 'gmg-cdiff-note' }, note)
   } else {
     body = h('div', { className: 'gmg-cdiff-body' }, h(UnifiedDiff, { rows: file.rows }))
   }
@@ -93,19 +94,34 @@ function CommitDiffPanel(props) {
     closeRef.current = typeof props?.onClose === 'function' ? props.onClose : () => {}
   }, [props?.onClose])
 
-  // Escape leaves the tab, the way it leaves a peek in an editor.
+  const rootRef = useRef(null)
+  const active = props.active !== false
+
+  // Escape leaves the tab, the way it leaves a peek in an editor. A split
+  // column can show two tabs at once, so the handler stands down when the
+  // keyboard focus belongs to another panel in the strip.
   useEffect(() => {
+    if (active === false) return undefined
     const onKey = (event) => {
       if (event.key !== 'Escape') return
+      const focused = document.activeElement
+      const owner = typeof focused?.closest === 'function' ? focused.closest('.gmg-commitpanel, .gmg-diffpanel') : null
+      if (owner !== null && owner !== rootRef.current) return
       closeRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [active])
 
   const [folded, setFolded] = useState(() => new Set())
   const commit = view?.commit ?? null
   const files = view?.files ?? []
+  // A path that was folded in one commit is not folded in the next: the tab is
+  // reusable, and a fold belongs to the reader's reading of *that* commit.
+  const commitSha = commit?.sha ?? (typeof params.sha === 'string' ? params.sha : '')
+  useEffect(() => {
+    setFolded(new Set())
+  }, [commitSha])
   const loading = view === null || view.status === 'loading' || view.status === 'idle'
   const error = view?.status === 'error' ? view.error : null
   const sha = commit?.sha ?? (typeof params.sha === 'string' ? params.sha : '')
@@ -194,7 +210,7 @@ function CommitDiffPanel(props) {
 
   return h(
     'div',
-    { className: 'gmg-root gmg-diffpanel gmg-commitpanel is-compact' },
+    { ref: rootRef, className: 'gmg-root gmg-diffpanel gmg-commitpanel is-compact' },
     header,
     h('div', { className: 'gmg-cdiff-scroll' }, body),
   )

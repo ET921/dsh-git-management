@@ -92,12 +92,12 @@ C:\Users\user\AppData\Roaming\dsh-desktop\harness\profiles\web\
 
 ```bash
 npm run build        # 產出 lib/
-npm run verify       # 139 項：Git 引擎 + 動作表 + 邊界狀態（bare／detached／merge／衝突）+ 提交差異 + HTTP 路由守衛 + 打包檢查
-npm run test:render  # 159 項：jsdom + 真的 React，掛起 lib/client.js 渲染面板、檔案 diff 與提交 diff 分頁
+npm run verify       # 143 項：Git 引擎 + 動作表 + 邊界狀態（bare／detached／merge／衝突）+ 提交差異 + HTTP 路由守衛 + 打包檢查
+npm run test:render  # 166 項：jsdom + 真的 React，掛起 lib/client.js 渲染面板、檔案 diff 與提交 diff 分頁
 ```
 
-- `scripts/verify.mjs`：對真的 `git` 二進位驗證 status/stage/commit/diff/log/branches/remote 與錯誤處理，含路徑有空白、含 `[` 的檔名，以及 bare repo、detached HEAD、merge 統計、`merge --abort`；提交差異另有自己的 repo，驗 root commit、單行修改只帶 hunk、改名（舊路徑）、刪除、二進位、merge 的第一父提交、空提交，以及超過 60 檔時只讀前 60 個 patch；另有一段直接驅動 `/dsh-git/api` 的 handler，驗證 Content-Type 與工作區白名單。
-- `scripts/render-test.mjs`：載入真正的 `lib/client.js`、呼叫 `apply(ctx)`、檢查兩個 slot 註冊、渲染面板、點一個檔案確認 diff 被請求並上色；點一列提交確認開的是 `git-commit` 分頁、參數是該提交、分頁把兩個檔案竪著畫出來、可折疊、可返回；另有衝突狀態（擋提交、標記解決、中止合併）與差異頁動作列的斷言。
+- `scripts/verify.mjs`：對真的 `git` 二進位驗證 status/stage/commit/diff/log/branches/remote 與錯誤處理，含路徑有空白、含 `[` 的檔名，以及 bare repo、detached HEAD、merge 統計、`merge --abort`；提交差異另有自己的 repo，驗 root commit、單行修改只帶 hunk、改名（舊路徑，含改名後又改內容）、刪除、二進位、只改 mode、merge 的第一父提交、空提交，以及超過 60 檔時只讀前 60 個 patch；另有一段直接驅動 `/dsh-git/api` 的 handler，驗證 Content-Type 與工作區白名單。
+- `scripts/render-test.mjs`：載入真正的 `lib/client.js`、呼叫 `apply(ctx)`、檢查兩個 slot 註冊、渲染面板、點一個檔案確認 diff 被請求並上色；點一列提交確認開的是 `git-commit` 分頁、參數是該提交、分頁把檔案竪著畫出來（含改名來源與截斷說明）、可折疊、可返回、`Esc` 關閉、隱藏分頁不理會 `Esc`、兩個分頁開同一提交只讀一次；另有衝突狀態（擋提交、標記解決、中止合併）與差異頁動作列的斷言。
 
 ## 六、安全邊界
 

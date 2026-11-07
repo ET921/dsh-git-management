@@ -168,8 +168,8 @@ function respond(action, params) {
         merge: false,
         additions: 3,
         deletions: 1,
-        total: 2,
-        truncated: false,
+        total: 65,
+        truncated: true,
         files: [
           {
             path: 'src/App.tsx',
@@ -200,6 +200,27 @@ function respond(action, params) {
             deletions: 0,
             binary: true,
             patch: ['diff --git a/assets/logo.png b/assets/logo.png', 'new file mode 100644', 'index 0000000..1111111', 'Binary files /dev/null and b/assets/logo.png differ'].join('\n'),
+          },
+          {
+            path: 'src/new.ts',
+            oldPath: 'src/legacy.ts',
+            status: 'R',
+            additions: 1,
+            deletions: 1,
+            binary: false,
+            patch: [
+              'diff --git a/src/legacy.ts b/src/new.ts',
+              'similarity index 90%',
+              'rename from src/legacy.ts',
+              'rename to src/new.ts',
+              'index 1111111..2222222 100644',
+              '--- a/src/legacy.ts',
+              '+++ b/src/new.ts',
+              '@@ -1,2 +1,2 @@',
+              '-export const legacy = 1',
+              '+export const fresh = 1',
+              ' export default legacy',
+            ].join('\n'),
           },
         ],
       }
@@ -784,16 +805,23 @@ if (fileRow !== null) {
 
       const commitCall = calls.filter((call) => call.action === 'commitDiff').pop()
       check('the commit tab asks the host for that commit', commitCall?.params?.sha === 'deadbeefdeadbeef', commitCall?.params)
-      check('the tab stacks one block per file', commitContainer.querySelectorAll('.gmg-cdiff-file').length === 2, commitContainer.querySelectorAll('.gmg-cdiff-file').length)
+      check('the tab stacks one block per file', commitContainer.querySelectorAll('.gmg-cdiff-file').length === 3, commitContainer.querySelectorAll('.gmg-cdiff-file').length)
       check('the header names the commit subject', (commitContainer.querySelector('.gmg-cdiff-subject')?.textContent ?? '').includes('wire the sidebar panel'), commitContainer.querySelector('.gmg-cdiff-subject')?.textContent)
       check('the header carries the short id', (commitContainer.querySelector('.gmg-sha')?.textContent ?? '') === 'deadbee', commitContainer.querySelector('.gmg-sha')?.textContent)
-      check('the header counts the files', (commitContainer.textContent ?? '').includes('2 個檔案'), commitContainer.querySelector('.gmg-cdiff-subline')?.textContent)
+      check('the header counts every file, not only the loaded ones', (commitContainer.textContent ?? '').includes('65 個檔案'), commitContainer.querySelector('.gmg-cdiff-subline')?.textContent)
       check('added lines are drawn', commitContainer.querySelector('.gmg-diffbody .gmg-diff-cell.is-add') !== null)
       check('removed lines are drawn', commitContainer.querySelector('.gmg-diffbody .gmg-diff-cell.is-del') !== null)
       check('the file header noise is not repeated', (commitContainer.textContent ?? '').includes('diff --git') === false, commitContainer.textContent?.slice(0, 200))
       check('a binary file says so instead of drawing', (commitContainer.textContent ?? '').includes('二進位檔'), commitContainer.textContent?.slice(0, 300))
+      check('a rename shows the path it came from', (commitContainer.querySelector('.gmg-cdiff-rename')?.textContent ?? '').includes('src/legacy.ts'), commitContainer.querySelector('.gmg-cdiff-rename')?.textContent)
+      check('a truncated list says what it left out', /共 65 個檔案/.test(commitContainer.textContent ?? ''), commitContainer.textContent?.slice(-200))
       const commitCss = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
       check('file headers stick while their diff scrolls', /\.gmg-cdiff-filehead\s*\{[^}]*position:\s*sticky/.test(commitCss), commitCss.slice(-200))
+      check(
+        'a file header lives inside the scrolling list, in its own section',
+        commitContainer.querySelector('.gmg-cdiff-scroll .gmg-cdiff-file > .gmg-cdiff-filehead') !== null,
+        commitContainer.querySelector('.gmg-cdiff-scroll')?.innerHTML.slice(0, 160),
+      )
 
       // Folding one block leaves its neighbour alone.
       const firstHead = commitContainer.querySelector('.gmg-cdiff-filehead')
@@ -802,8 +830,10 @@ if (fileRow !== null) {
       })
       check(
         'folding a file hides only its diff',
-        commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 1 && commitContainer.querySelectorAll('.gmg-cdiff-body').length === 0,
-        commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length,
+        commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 1 &&
+          commitContainer.querySelector('.gmg-cdiff-file.is-folded .gmg-cdiff-body') === null &&
+          commitContainer.querySelectorAll('.gmg-cdiff-body').length === 1,
+        commitContainer.querySelectorAll('.gmg-cdiff-body').length,
       )
 
       const collapseAll = [...commitContainer.querySelectorAll('button')].find((button) => /收合全部/.test(button.textContent ?? ''))
@@ -812,13 +842,65 @@ if (fileRow !== null) {
         await act(async () => {
           collapseAll.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
         })
-        check('collapse all folds every block', commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 2)
+        check('collapse all folds every block', commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 3)
         const expandAll = [...commitContainer.querySelectorAll('button')].find((button) => /展開全部/.test(button.textContent ?? ''))
         await act(async () => {
           expandAll?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
         })
-        check('expand all brings the diffs back', commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 0 && commitContainer.querySelectorAll('.gmg-cdiff-body').length === 1)
+        check('expand all brings the diffs back', commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 0 && commitContainer.querySelectorAll('.gmg-cdiff-body').length === 2)
       }
+
+      // Two tabs on the same commit share one host read.
+      const beforeDedupe = calls.filter((call) => call.action === 'commitDiff').length
+      const twinContainer = document.createElement('div')
+      document.body.appendChild(twinContainer)
+      const twinRoot = createRoot(twinContainer)
+      await act(async () => {
+        twinRoot.render(
+          React.createElement(commitRegistration.component, {
+            ...commitRegistration.declaration.inject(),
+            actions: { close: () => {} },
+            useTabInfo: () => ({ tab: { id: 'tab-commit-twin', visible: true, navigation: { params, revision: 1 } } }),
+          }),
+        )
+        await new Promise((resolve) => setTimeout(resolve, 30))
+      })
+      check('two tabs on one commit ask git once', calls.filter((call) => call.action === 'commitDiff').length === beforeDedupe, calls.map((call) => call.action))
+      check('the second tab renders from the cache', twinContainer.querySelectorAll('.gmg-cdiff-file').length === 3, twinContainer.querySelectorAll('.gmg-cdiff-file').length)
+      await act(async () => {
+        twinRoot.unmount()
+      })
+      twinContainer.remove()
+
+      // Escape closes the tab it belongs to (docs promise this), but a hidden
+      // tab in a split strip must not answer for the visible one.
+      await act(async () => {
+        dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      check('Escape closes the commit tab', closed === true)
+
+      const hiddenContainer = document.createElement('div')
+      document.body.appendChild(hiddenContainer)
+      const hiddenRoot = createRoot(hiddenContainer)
+      let hiddenClosed = false
+      await act(async () => {
+        hiddenRoot.render(
+          React.createElement(commitRegistration.component, {
+            ...commitRegistration.declaration.inject(),
+            actions: { close: () => { hiddenClosed = true } },
+            useTabInfo: () => ({ tab: { id: 'tab-commit-hidden', visible: false, navigation: { params, revision: 1 } } }),
+          }),
+        )
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      await act(async () => {
+        dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      check('a hidden commit tab ignores Escape', hiddenClosed === false)
+      await act(async () => {
+        hiddenRoot.unmount()
+      })
+      hiddenContainer.remove()
 
       const backButton = [...commitContainer.querySelectorAll('button')].find((button) => (button.textContent ?? '').includes('返回'))
       if (backButton !== undefined) {

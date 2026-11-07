@@ -22,7 +22,7 @@ git show --numstat -z --format= --find-renames --no-ext-diff [--diff-merges=firs
 git show --format= --patch --unified=3 --find-renames --no-ext-diff ... <sha> -- :(literal)<path>
 ```
 
-- `--numstat -z` 一次拿到每個檔案的 `+N −N` 與改名配對（`0\t0\t\0old\0new\0`），路徑不被引號或 tab 破壞。
+- `--numstat -z` 一次拿到每個檔案的 `+N −N` 與改名配對（`0\t0\t\0old\0new\0`），檔名不會被引號包住、也不會被截斷。
 - 每個檔案的 patch **單獨問一次**，用該檔自己的 literal pathspec。改名時同時給舊、新兩個路徑，git 才報得出 `rename from/to`；只給新路徑會被視為「新檔案、全部是新增」。
 - 不用「跑一次大 patch 再按 `diff --git` 切」：檔名含空白時那行本來就有歧義，而 `--numstat` 的順序與大 patch 的段落順序沒有契約。多花幾十毫秒換取正確性。
 - 上限 60 個檔案（並行 4 個 `git show`）。更大的提交是產生檔或 vendored 變更，側欄也讀不完；超過的部分仍會回報總數，UI 說明只畫了前 60 個。
@@ -39,7 +39,10 @@ A：不要。使用者要的是「僅變更」。`--unified=3` 就是 git 的預
 A：側欄的 tab 型別預設在同一格內去重（第二次開只會 re-navigate）。宣告 `multiple: true` 後每次 `openTab` 都拿到獨立的 occurrence 位址，於是兩個提交可以並排；代價是資料不能放在「唯一當前目標」的 store 裡，所以改成按 `repo#sha` 快取的 Map（見 `17-commit-diff.js`），LRU 保留 12 筆。
 
 **Q：兩個分頁開同一個提交，會不會問兩次 git？**
-A：不會。快取以 `pathKey(repo)#sha` 為鍵，兩個分頁共用同一筆；過期（被 LRU 丟掉）時分頁會自己重讀，不會留下空白。
+A：不會。快取以 `repo#sha` 為鍵，兩個分頁共用同一筆；過期（被 LRU 丟掉）時分頁會自己重讀，不會留下空白。**開著的分頁會把它的 key「釘住」**，LRU 只淘汰沒人顯示的條目——否則第 13 個分頁一開，就會把第 1 個的資料擠掉，它再重讀又擠掉下一個，十三個分頁會互相重讀個不停。釘住的條目超過上限時就讓它超出，上限只約束關掉的分頁。
+
+**Q：Escape 會不會把別的分頁一起關掉？**
+A：單欄時只會有關鍵中分頁的 handler 存在。分欄（兩個 pane）同時顯示兩個分頁時，handler 會看 `tab.visible`，並在鍵盤焦點落在另一個 diff／提交面板時讓位，只關掉自己。
 
 **Q：二進位檔、改名、刪除、空提交？**
 A：二進位標一個「二進位」徽章（不畫假的行號）；改名顯示 `← 舊路徑`，狀態 `R`；刪除 `D`；空提交顯示「這次提交沒有檔案變更」。
@@ -79,6 +82,7 @@ Ada · 3 分鐘前                     2 個檔案  +3  −1   [收合全部]
 | 提交沒有檔案變更 | 「這次提交沒有檔案變更。」 |
 | 超過 60 個檔案 | 畫前 60 個，底部說明「共 N 個檔案，這裡只載入前 60 個的差異」 |
 | 二進位檔 | 標「二進位」，不畫行號 |
+| 只改檔案權限（mode） | 「只改了檔案權限（mode），內容沒有變。」 |
 
 ## 6. 這個版本不做
 
@@ -89,6 +93,6 @@ Ada · 3 分鐘前                     2 個檔案  +3  −1   [收合全部]
 
 ## 7. 驗收
 
-- `npm run verify`：root commit、單行修改只有一個 hunk、改名（舊路徑＋`rename from`）、刪除、二進位、merge 的第一父提交、空提交、非十六進位 sha 被拒。
-- `npm run test:render`：歷史列是 `role=button`；點擊開啟 `git-commit` 分頁並帶 `{ path, sha, short, subject }`；分頁請 host 讀 `commitDiff`；兩個檔案竪著畫、加入／刪除行上色、檔頭雜訊不重畫、二進位有說明；單檔折疊、全部展開／收合、返回關閉；晶片顯示主旨。
+- `npm run verify`：root commit、單行修改只有一個 hunk、改名（舊路徑＋`rename from`）、改名後又改內容、刪除、二進位、只改 mode、merge 的第一父提交、空提交、超過 60 檔的上限、非十六進位 sha 被拒。
+- `npm run test:render`：歷史列是 `role=button`；點擊開啟 `git-commit` 分頁並帶 `{ path, sha, short, subject }`；分頁請 host 讀 `commitDiff`；檔案竪著畫、加入／刪除行上色、檔頭雜訊不重畫、改名來源、二進位說明、截斷說明；單檔折疊、全部展開／收合、`Esc` 關閉、隱藏分頁不理會 `Esc`；兩個分頁開同一提交只讀一次；晶片顯示主旨。
 - 手動：在面板點一列 → 新分頁出現 → 再點另一列 → 兩個分頁並存 → 切換不重讀。

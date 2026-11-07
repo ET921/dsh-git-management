@@ -14,11 +14,12 @@
  * in exactly one place.
  */
 
-/** How many commits keep their parsed patches; older entries are dropped. */
+/** How many commits keep their parsed patches; entries shown by an open tab are never dropped. */
 const COMMIT_VIEW_LIMIT = 12
 
 /** What a key with no entry yet looks like. */
 const COMMIT_VIEW_EMPTY = {
+  key: null,
   status: 'idle',
   error: null,
   commit: null,
@@ -29,7 +30,7 @@ const COMMIT_VIEW_EMPTY = {
   truncated: false,
 }
 
-/** `pathKey(path)#sha` → view. */
+/** `repo#sha` → view. */
 const gmgCommitViews = new Map()
 
 /** Keys by last use, newest first, so the LRU trim can drop the tail. */
@@ -40,14 +41,24 @@ const gmgCommitListeners = new Set()
 /** Per-key request token: a slow answer must not overwrite a newer one. */
 const gmgCommitTokens = new Map()
 
+/** How many mounted tabs show each key; a pinned entry is never evicted. */
+const gmgCommitPinned = new Map()
+
 /**
- * The cache key for one commit in one repository.
+ * One cache key.
+ *
+ * The path is normalised but deliberately **not** case-folded: on a
+ * case-sensitive filesystem `Repo` and `repo` are different repositories, and
+ * folding them would show one repository's commit in the other's tab. On
+ * Windows the cost of not folding is at most a second read of the same commit.
+ *
  * @param path - the repository directory.
  * @param sha - the commit id.
  * @returns the key.
  */
 function commitViewKey(path, sha) {
-  return `${pathKey(path)}#${String(sha ?? '')}`
+  const normalized = String(path ?? '').replace(/\\/g, '/').replace(/\/+$/, '')
+  return `${normalized}#${String(sha ?? '')}`
 }
 
 /**
@@ -65,22 +76,18 @@ function notifyCommitViews() {
 }
 
 /**
- * Merge a partial view into the cache and notify.
+ * Drop the oldest unpinned entries beyond the limit.
  *
- * The trim is what keeps a long session bounded: each entry holds parsed
- * patches for up to sixty files. An entry that is still loading is never
- * dropped, so trimming cannot strand a request in flight.
- *
- * @param key - the cache key.
- * @param patch - the fields to replace.
+ * A key is pinned while a tab is showing it, so the trim can never evict the
+ * view a reader is looking at. Without that rule, the recovery read of an
+ * evicted tab would evict the next one, and thirteen open commit tabs would
+ * keep reloading each other forever.
  */
-function setCommitView(key, patch) {
-  const previous = gmgCommitViews.get(key) ?? { ...COMMIT_VIEW_EMPTY }
-  gmgCommitViews.set(key, { ...previous, ...patch })
-  gmgCommitOrder = [key, ...gmgCommitOrder.filter((entry) => entry !== key)]
+function trimCommitViews() {
+  if (gmgCommitOrder.length <= COMMIT_VIEW_LIMIT) return
   const droppable = gmgCommitOrder.filter((entry) => {
     const view = gmgCommitViews.get(entry)
-    return view !== undefined && view.status !== 'loading'
+    return view !== undefined && view.status !== 'loading' && (gmgCommitPinned.get(entry) ?? 0) === 0
   })
   while (gmgCommitOrder.length > COMMIT_VIEW_LIMIT && droppable.length > 0) {
     const dropped = droppable.pop()
@@ -88,7 +95,39 @@ function setCommitView(key, patch) {
     gmgCommitViews.delete(dropped)
     gmgCommitTokens.delete(dropped)
   }
+}
+
+/**
+ * Merge a partial view into the cache and notify.
+ * @param key - the cache key.
+ * @param patch - the fields to replace.
+ */
+function setCommitView(key, patch) {
+  const previous = gmgCommitViews.get(key) ?? { ...COMMIT_VIEW_EMPTY }
+  gmgCommitViews.set(key, { ...previous, ...patch, key })
+  gmgCommitOrder = [key, ...gmgCommitOrder.filter((entry) => entry !== key)]
+  trimCommitViews()
   notifyCommitViews()
+}
+
+/**
+ * Pin one key while a tab shows it.
+ *
+ * @param key - the cache key, or null.
+ * @returns the release function (safe to call more than once).
+ */
+function pinCommitView(key) {
+  if (key === null) return () => {}
+  gmgCommitPinned.set(key, (gmgCommitPinned.get(key) ?? 0) + 1)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    const left = (gmgCommitPinned.get(key) ?? 1) - 1
+    if (left <= 0) gmgCommitPinned.delete(key)
+    else gmgCommitPinned.set(key, left)
+    trimCommitViews()
+  }
 }
 
 /**
@@ -104,7 +143,11 @@ function useCommitView(key) {
     gmgCommitListeners.add(listener)
     return () => gmgCommitListeners.delete(listener)
   }, [key])
-  return snapshot
+  // A snapshot taken for another key must never be shown for this one: the
+  // effect that re-reads runs after the first render, and one frame of the
+  // previous commit under the new header is a wrong diff, not a slow one.
+  if (snapshot !== null && snapshot.key === key) return snapshot
+  return getCommitView(key)
 }
 
 /**
@@ -124,7 +167,12 @@ const COMMIT_META_LINE = /^(diff --git |index |--- |\+\+\+ |new file mode |delet
  * @returns the row with parsed `rows`.
  */
 function parseCommitFile(file) {
-  const parsed = parsePatch(String(file?.patch ?? ''))
+  const patch = String(file?.patch ?? '')
+  const parsed = parsePatch(patch)
+  const rows = parsed.rows.filter((row) => row.kind !== DIFF_META || COMMIT_META_LINE.test(row.text) === false)
+  // A chmod-only change has no hunk at all: say what changed instead of
+  // "no textual difference", which reads like an empty patch.
+  const modeOnly = rows.length === 0 && /^(old|new) mode /m.test(patch)
   return {
     path: String(file?.path ?? ''),
     oldPath: typeof file?.oldPath === 'string' ? file.oldPath : null,
@@ -132,7 +180,8 @@ function parseCommitFile(file) {
     additions: Number(file?.additions) > 0 ? Number(file.additions) : 0,
     deletions: Number(file?.deletions) > 0 ? Number(file.deletions) : 0,
     binary: file?.binary === true,
-    rows: parsed.rows.filter((row) => row.kind !== DIFF_META || COMMIT_META_LINE.test(row.text) === false),
+    modeOnly,
+    rows,
   }
 }
 
