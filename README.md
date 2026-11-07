@@ -1,79 +1,324 @@
-# dsh-git-management — 側邊欄 Git 原始碼管理
+# dsh-git-management
 
-在 DeepSeek Harness 的**右側邊欄**加一個 **Source Control**（原始碼管理）分頁：暫存、提交、分支、同步、歷史，以及 GitHub 的 PR／Issue 互動。位置就在「工作區文件」「新建終端」那兩張卡片的下面，目標是「Cursor 的 Source Control 那個樣子」。
+[English](README.en.md) | **繁體中文** | [简体中文](README.zh-CN.md)
 
-> 入口：右側邊欄 →「開始」頁 → 第三張卡片「源代码管理」。點下去會在該欄開一個 Git 分頁，分頁晶片會顯示目前有幾個檔案待處理。
-> 注意：右側邊欄是 session 範圍的，所以要先開著一個 session（有工作區）才會看到。
+**在 DSH 右側邊欄直接管 Git**：暫存、提交、切分支、同步、看歷史、開 PR，全程不用離開對話。
+
+> 這份說明是寫給 **vibe coder** 的：不用背 git 指令，照著「常見情境」點就好。
+> 想先看它長怎樣，往下滑到截圖位置（圖片待補，位置已留好）。
+
+![面板總覽（截圖待補）](docs/images/00-overview.png)
+
+> 📸 **截圖位置 00**：整個右側 Git 分欄。怎麼截見文末〈截圖清單〉。
 
 ---
 
-## 一、可行性結論：可以，而且路徑和 Cursor 幾乎一樣
+## 這是什麼？
 
-**Cursor 就是 VS Code 的分支。** 官方〈VS Code Migration〉寫得很直接：「Cursor is based upon the VS Code codebase… We regularly rebase Cursor onto the latest VS Code version」（<https://cursor.com/docs/configuration/migrations/vscode>）。所以 Cursor 的 Source Control 面板 == VS Code 內建的 `vscode.git` 擴充功能。
+- **一個 DSH 外掛**：在右側邊欄多一個「源代码管理」分頁，長得像 Cursor／VS Code 的 Source Control。
+- **背後就是系統的 `git`**：跟你在終端打 `git status` 看到的完全一樣。沒有內嵌 Git、沒有神祕狀態，面板和終端永遠對得上。
+- **面板只是入口**：檔案差異、整筆提交的差異、工作樹、GitHub PR，都在同一個欄裡開分頁，對話不會被蓋掉。
 
-它實際的運作方式（都可以在原始碼裡查到）：
+```mermaid
+flowchart LR
+  A["右側邊欄"] --> B["開始頁"]
+  B --> C["卡片：源代码管理"]
+  C --> D["Git 分頁"]
+  D --> E["變更清單"]
+  D --> F["歷史提交"]
+  D --> G["工作樹"]
+  D --> H["GitHub"]
+  E --> I["檔案差異分頁"]
+  F --> J["提交差異分頁"]
+```
 
-| 問題 | 事實 | 出處 |
-| --- | --- | --- |
-| Git 怎麼實作？ | **呼叫系統的 `git` 執行檔**，不是 libgit2、也不是內嵌 Git。`cp.spawn(this.path, args)` | <https://github.com/microsoft/vscode/blob/main/extensions/git/src/git.ts> |
-| 用哪些指令？ | `git status -z -uall`、`git diff`、`git diff --cached`、`git log --oneline`、`git for-each-ref`、`git rev-parse --show-toplevel`、`git stash`… | 同上 |
-| 面板是擴充功能做的嗎？ | **不是**。SCM 檢視是 workbench 核心靜態註冊的（`workbench.view.scm`、`workbench.scm`、`workbench.scm.repositories`），擴充功能只透過 `vscode.scm` API 餵資料 | <https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/scm/browser/scm.contribution.ts> |
-| GitHub 互動怎麼做？ | `github-authentication` 擴充提供 session，`vscode-pull-request-github` 用 Octokit 呼叫 REST/GraphQL | <https://github.com/microsoft/vscode-pull-request-github> |
-| 有沒有限制？ | 超大 repo 的 status 在 10000 筆會截斷；packed refs 會讓 ahead/behind 暫時過期；子模組只做基本處理；沒有內建 LFS | `git.ts` / `repository.ts` |
+---
 
-**DSH 有對應的每一塊**，所以這個外掛不是硬闖，而是照同一個模型落地：
+## 30 秒上手
 
-| VS Code / Cursor | DSH 對應 |
+1. 先開一個 **session**（右側邊欄是 session 範圍的，沒有 session 看不到）。
+2. 右側欄切到「**開始**」，往下找到第三張卡片「**源代码管理**」。
+3. 點它 → 右欄多一個 Git 分頁，預設會選好目前 workspace 的 repo。
+
+![開始頁與卡片（截圖待補）](docs/images/01-start.png)
+
+> 📸 **截圖位置 01**：右欄「開始」頁，第三張卡片要完整入鏡。
+
+沒看到面板？直接跳〈卡住了？〉。
+
+---
+
+## 介面地圖
+
+```mermaid
+flowchart TB
+  P["Git 分頁"] --> A["分支列<br/>目前分支、ahead/behind、Fetch/Pull/Push"]
+  P --> B["提交框<br/>訊息、全部暫存、amend"]
+  P --> C["變更清單<br/>已暫存／更改／衝突"]
+  P --> D["工作樹<br/>這份 repo 的所有 checkout"]
+  P --> E["歷史提交<br/>提交列＋分支軌道"]
+  P --> F["GitHub<br/>repo 資訊、PR、Issue"]
+```
+
+| 區塊 | 一句話 |
 | --- | --- |
-| SCM 檢視容器（靜態） | 右側欄的分頁系統：`ctx.sidebarRightTabs.register(...)` 宣告型別＋開始頁卡片，`sidebar.right.pane.tab`／`sidebar.right.pane.tab.title` 兩個 slot 提供內容與晶片 |
-| `vscode.git` 擴充（spawn git） | Host 外掛 + `ctx.subprocess.spawn(['git', ...])` |
-| 擴充功能 ↔ workbench 的 RPC | `ctx.webServer.register({ kind: 'exact', path: '/dsh-git/api' })` + 同源 fetch |
-| GitHub 認證 session | 瀏覽器端 Personal Access Token（可選） |
-| 工作區／資料夾 | `ctx.workspaceRegistry.list()` |
+| 分支列 | 你現在在哪、離遠端多遠、一鍵同步 |
+| 提交框 | 寫訊息、按提交 |
+| 變更清單 | 哪些檔案改了；點檔案看差異 |
+| 工作樹 | 同一個 repo 的多個資料夾（讓 Agent 平行工作） |
+| 歷史提交 | 過去發生什麼；點一列看那次改了什麼 |
+| GitHub | 不用開瀏覽器就能看 PR／Issue、開 PR |
 
 ---
 
-## 二、它做得到什麼
+## 你可以做什麼
 
-面板在**右側邊欄**，跟「工作區文件」「新建終端」是同一組卡片（右側邊欄的開始頁），點卡片就開一個 Git 分頁。
+### 提交（最常用）
 
-- **右側邊欄卡片與分頁**：`sidebarRightTabs` 註冊一個 `git` 型別 → 開始頁多一張卡片；分頁晶片顯示分支圖示、標題與待處理檔案數。
-- **分支列**：目前分支（點擊可切換）、上游、`↑ahead ↓behind`、Fetch／Pull（`--ff-only`）／Push（首次自動 `-u origin`）、新建分支。detached HEAD 下推送會直接說明原因，不會組出 `origin null`。
-- **提交框**：訊息、`Ctrl+Enter` 提交、全部暫存、amend（勾選時把上次提交的訊息帶進輸入框預覽）、已暫存/未暫存計數。**有未解決的衝突時提交鍵停用**，並在下方式說明。
-- **變更清單**：已暫存 / 更改 / 衝突三組，每組標頭左側有**收合箭頭**（收起來後仍看得到該組檔數），逐檔 `+12 -3`，hover 出現暫存、取消暫存、放棄、刪除未追蹤檔（有確認）。衝突檔多一顆「標記為已解決」。
-- **點檔案 → 在側邊欄新開一個「檔案差異」分頁**：變更清單與對話都留在原位，diff 自己是一個分頁（晶片顯示檔名）：雙欄行號、統一／並排切換、上一個／下一個檔案、已暫存⇄工作區切換、`Esc`／返回關閉分頁。分頁標頭直接有「暫存」與「放棄／刪除」，review 完不必回到清單；衝突檔會顯示「有未解決的衝突」而不是畫錯行號。
-- **hover 詳情卡**：滑鼠停在提交上顯示 sha、作者、相對時間、訊息、`N 個檔案 +X −Y` 與「在 GitHub 開啟」；停在分支上顯示上游、領先/落後與最後一次提交。作者一律先找 GitHub 帳號，**不必等推送**：已推送的提交由 GitHub 直接回答；還在本機的提交則用它的作者信箱換帳號（自己的信箱＝你授權的帳號，別人的信箱＝GitHub commit 搜尋），兩者都查不到才回退 git 名稱。卡片一律開在欄的**左側**、右緣距欄 12px，寧可蓋住對話也不壓住你正在指的那一行；高度跟著內容不設上限（長內文不截斷），只有高過視窗時才在最上緣固定並捲動。停留約 280ms 才出現，且不可點，不影響原本的點擊行為。
-- **歷史＋分支軌道**：左邊是提交列（主旨＋ref 徽章，不再顯示 sha——sha 在 hover 卡裡），右邊是 SVG 畫的分支軌道（lane）：每條未合併的線一欄，merge 畫成彎出去的邊，有 ref 的提交是實心點。資料來自 `git log --all --topo-order`（含 `%P` 父提交與 `%D` ref），所以**所有分支的活動**都在同一張圖上，不只是當前分支（含 fetch 下來、只存在 `origin/*` 上的提交）。預設顯示 10 筆，可展開到 40 筆。見 [src/client/16-graph.js](src/client/16-graph.js)。
-- **點一列提交 → 側邊欄新開一個「提交差異」分頁**：跟 Cursor 的歷史一樣，列本身就是入口。每個檔案是一個區塊、**竪著排列**，標頭是路徑、狀態與 `+N −N`（改名顯示 `← 舊路徑`），標頭在捲動時**吸頂**，所以滑到哪裡都知道自己在看哪個檔；點標頭可單獨收合，另有一鍵的「展開全部／收合全部」。內容**只畫變更的 hunk**（前後三行上下文），不載入全文——這正是「僅變更」的意思。merge 依**第一父提交**畫，和二進位檔的統計口徑一致；二進位檔只標一個「二進位」而不是畫錯行號。每次點擊都是**獨立分頁**（`multiple: true`），兩個提交可以並排看，清單與對話都不會被換掉。單一提交最多讀 60 個檔案的 patch，超過時列表仍會說明總數；資料按 `repo#sha` 快取，重開同一個提交不會再問 git。設計與取捨見 [docs/commit-diff.md](docs/commit-diff.md)。
-- **本機 vs 遠端，用顏色分**：ref 徽章依「在哪台機器」上色，並各配一個圖示（色盲也分得出來）——你目前的檢出是**實心藍底＋實心點**、其他本機分支是**淡藍底＋分支圖示**、遠端分支（`origin/*`）是**飽和紫＋雲**、標籤是**琥珀＋標籤圖示**。分支列的 upstream 也依關係上色：同步✓綠、領先↑藍、落後↓琥珀、分叉↑↓紅。色票（`--gmg-*`）是面板自帶的飽和色，因為主題 accent 對 10px 徽章太淡；淺色主題另有一組較深的同色相，兩邊對比都 ≥4.8:1，車道線則用固定的高飽和八色。
-- **GitHub**：遠端解析（ssh/https 皆可）、星標/復刻/issue 數、在瀏覽器開啟、PR 清單、Issue 清單、從目前分支建立 PR。GHES（非 github.com 的 origin）會自動走 `<host>/api/v3`，也可用 `GITHUB_API_URL` 覆蓋。
-- **工作樹**：列出這份 repo 的所有 checkout（含 DSH 自己的 `.agents/worktrees/*` 與你手動加的），每列顯示分支、相對路徑、髒污計數與 `主` 標記；可以一鍵把面板切過去、開成 DSH 工作區、或在確認後移除。見 [docs/worktrees.md](docs/worktrees.md)。
-- **多工作區**：下拉切換 DSH 工作區（自動記住上次選擇；非 Git 目錄提供「初始化倉庫」）。
-- **回饋與狀態**：錯誤與成功提示 sticky 在頂端，捲動也看得見；背景輪詢只在沒有其他操作時跑，而且只重讀 `status`，不會清掉你剛看到的錯誤；每個操作有自己的 token，重疊時 spinner 不會提早消失；讀不到工作區列表時給的是「重新讀取」而不是假裝沒有倉庫。
+- 在「更改」清單 hover 檔案 → `＋` 暫存、`↺` 放棄、`🗑` 刪除未追蹤檔。
+- 寫提交訊息 → `Ctrl+Enter` 或按「提交」。
+- 「全部暫存」一次收進所有變更；勾「修改上次提交」可 amend（訊息會先幫你帶入）。
+- 有衝突時提交鍵會停用，並直接告訴你為什麼。
 
-## 三、故意沒做的事（以及原因）
+![變更清單與操作（截圖待補）](docs/images/02-changes.png)
 
-- **不內嵌 Git**、不引入 libgit2：跟 VS Code 一樣用系統 `git`。好處是行為與終端機完全一致，壞處是使用者必須自己裝 Git（本機已裝 2.53）。
-- **不做檔案監看**：面板可見時每 8 秒輪詢一次 `status`，加上視窗 focus 時刷新。VS Code 用檔案事件 + `.git` watcher，那需要 Host 端的 fs.watch 橋接，屬於下一步。
-- **不做衝突解決器**：只標示衝突檔。
-- **Token 只存在這個瀏覽器**（localStorage），推送本身走你本機 git 的憑證（SSH / credential manager），與 token 無關。
+> 📸 **截圖位置 02**：變更清單，hover 某一列讓動作按鈕出現。
+
+### 看差異
+
+- 點檔案 → 右欄開「**檔案差異**」分頁：雙欄行號、統一／並排、上一個／下一個檔案、`Esc` 關閉。
+- 分頁標頭直接有「暫存」「放棄」——review 完不用回到清單。
+- 衝突檔會直接說「有未解決的衝突」，不會畫錯行號。
+
+![檔案差異（截圖待補）](docs/images/03-file-diff.png)
+
+> 📸 **截圖位置 03**：檔案差異分頁，切到「並排」。
+
+### 看某一次提交改了什麼
+
+- 歷史任一列點下去 → 右欄開一個新的「**提交差異**」分頁。
+- 每個檔案一個區塊、**竪著排**；只畫有變更的 hunk（不載入全文）。
+- 改名會顯示 `← 舊路徑`；二進位檔標「二進位」；merge 依第一父提交畫。
+- 每次點擊都是**獨立分頁**，兩個提交可以並排看。
+
+```mermaid
+sequenceDiagram
+  participant U as 你
+  participant P as 面板
+  participant H as Host
+  participant G as git
+  U->>P: 點歷史某一列
+  P->>H: 開分頁 + commitDiff(sha)
+  H->>G: git show（逐檔 patch）
+  G-->>H: 檔案清單 + 變更
+  H-->>P: JSON
+  P-->>U: 新分頁，檔案竪著排
+```
+
+![提交差異（截圖待補）](docs/images/04-commit-diff.png)
+
+> 📸 **截圖位置 04**：提交差異分頁，挑一筆動 2–4 個檔案的提交。
+
+### 歷史與分支軌道
+
+- 左邊是提交列（主旨＋ref 徽章），右邊是 SVG 分支軌道：merge 是彎出去的邊，所有分支都在同一張圖。
+- ref 徽章用顏色＋圖示區分「目前檢出／其他本機分支／遠端／標籤」。
+- hover 提交可看 sha、作者、時間、內文、`N 個檔案 +X −Y`。
+- 預設顯示 10 筆，可展開到 40 筆。
+
+![歷史與分支軌道（截圖待補）](docs/images/05-history.png)
+
+> 📸 **截圖位置 05**：歷史卡，最好拍到有 merge 的 repo。
+
+### 工作樹（讓 Agent 平行工作）
+
+- 列出這份 repo 的所有 checkout，包括 DSH 自己建的 `.agents/worktrees/*`。
+- 每列顯示分支、路徑、髒污計數、`主` 標記；可切換面板、開成 DSH 工作區、移除或 prune。
+
+![工作樹（截圖待補）](docs/images/06-worktree.png)
+
+> 📸 **截圖位置 06**：工作樹區塊，至少要有主工作樹＋一個 worktree。
+
+### GitHub
+
+- 自動認出 origin（ssh／https、GitHub Enterprise 也行）。
+- 看星標／復刻／issue 數、PR 清單、Issue 清單，從目前分支一鍵開 PR。
+- Token 只存在這個瀏覽器；推送走你本機的 git 憑證。
+
+![GitHub 卡（截圖待補）](docs/images/07-github.png)
+
+> 📸 **截圖位置 07**：GitHub 卡（先連好 token）。
+
+### 其他小東西
+
+- 多 workspace 下拉切換（會記住上次選的）。
+- 不是 git repo 的資料夾可以一鍵 `git init`。
+- 背景每 8 秒只讀 `status`，不會洗掉你剛看到的錯誤。
+- 錯誤與成功提示 sticky 在頂端，捲動也看得到。
 
 ---
 
-## 四、安裝
+## 常見情境（照著做）
 
-外掛已以「本地開發版」安裝到 DSH Desktop 的 `web` profile：
+### 1. 我改完程式，想提交
+
+1. 右欄「源代码管理」→「更改」清單。
+2. 檔案 hover → `＋` 暫存（或直接按「全部暫存」）。
+3. 寫訊息 → 提交。
+4. 要推上去 → 分支列「Push」（第一次會自動設 upstream）。
+
+```mermaid
+flowchart LR
+  W["工作區<br/>你改的檔案"] -->|暫存| S["暫存區"]
+  S -->|提交| L["本機歷史"]
+  L -->|Push| R["遠端"]
+  R -->|Fetch / Pull| L
+```
+
+### 2. 我想看某次提交改了什麼
+
+1. 往下滑到「歷史提交」。
+2. 點那一列 → 右欄開「提交差異」。
+3. 檔案多時可用檔頭折疊，或按「收合全部」。
+
+### 3. 我想切分支／同步
+
+1. 點分支列的分支名稱 → 選單選分支。
+2. `Fetch` 看遠端有沒有新東西；`Pull` 只做快進合併；`Push` 推出去。
+3. `↑2 ↓1` 代表本機領先 2、落後 1。
+
+### 4. 我想讓 Agent 平行工作（worktree）
+
+1. 「工作樹」區塊按 `＋`，輸入名字（例如 `fix-ui`）。
+2. 它會建立在 `.agents/worktrees/fix-ui`、分支 `worktree-fix-ui`。
+3. 按「開啟」把它開成另一個 DSH 工作區；Agent 在那邊改，主工作區不受影響。
+
+### 5. 我想開 PR
+
+1. 先把分支 Push。
+2. 到「GitHub」卡按「新建 PR」→ 填標題／說明／目標分支。
+3. 或按「在 GitHub 打開」用網頁操作。
+
+---
+
+## 截圖清單（給你上傳用）
+
+把截圖存到 `docs/images/`，檔名照下表；README 已經接好，**不用改程式**。
+圖片建議：深色主題、寬度 800–1200px、PNG。截圖前記得遮掉 token、私人 repo 名稱等不想公開的內容。
+
+| 檔名 | 在哪裡截 | 畫面要包含 | 小提示 |
+| --- | --- | --- | --- |
+| `00-overview.png` | 開著 Git 分頁的整個右欄 | 分支列、提交框、變更清單、歷史 | 欄寬 360–420px |
+| `01-start.png` | 右欄「開始」頁 | 第三張卡片「源代码管理」＋上下兩張卡 | 讓卡片完整入鏡 |
+| `02-changes.png` | 變更清單，hover 某一列 | 分組標頭、`+N −N`、hover 動作 | 至少 3 個變更（改 + 新檔） |
+| `03-file-diff.png` | 檔案差異分頁，切「並排」 | 雙欄行號、紅綠底、標頭按鈕 | 挑一個真的有增刪的檔 |
+| `04-commit-diff.png` | 提交差異分頁 | 2–4 個檔案區塊、檔頭、hunk | 有改名或二進位更好 |
+| `05-history.png` | 歷史卡 | 提交列、ref 徽章、分支軌道 | 有 merge 的 repo 最漂亮 |
+| `06-worktree.png` | 工作樹區塊 | 主工作樹＋至少一個 worktree、`主` 標記 | 可先建一個 demo worktree |
+| `07-github.png` | GitHub 卡 | repo 名、星標、PR／Issue 清單 | 先把 token 連好 |
+
+---
+
+## 卡住了？
+
+| 症狀 | 原因 | 解法 |
+| --- | --- | --- |
+| 右欄沒有「源代码管理」卡片 | 沒開 session，或外掛還沒載入 | 先開一個 session；`Ctrl+R` 重載頁面 |
+| 顯示 `unknown action: commitDiff` | 頁面是新版、**Host 還是舊的 process** | 從選單／托盤「完全結束」DSH Desktop 再開（`Ctrl+R` 不夠） |
+| 改了程式碼但面板沒變 | 面板每 8 秒只讀 `status` | 按一下重新整理，或切回視窗觸發刷新 |
+| 看不到某個分支的提交 | 歷史只讀本機已有的 ref | 先 `Fetch` |
+| 推送失敗 | 本機 git 憑證沒設定 | 在終端 `git push` 一次，讓 Credential Manager 記住 |
+| 面板空白／壞掉 | client bundle 沒 build 或壞了 | `npm run build` 後 `Ctrl+R` |
+
+---
+
+## 名詞小抄（給不熟 git 的人）
+
+| 名詞 | 白話 |
+| --- | --- |
+| 工作區 | 你正在編輯的檔案 |
+| 暫存（stage） | 把這次要提交的改動先圈起來 |
+| 提交（commit） | 把圈起來的改動存成一個歷史點 |
+| 分支（branch） | 一條獨立的開發線 |
+| Fetch | 問遠端「有沒有新東西」，先不下載合併 |
+| Pull | 把遠端新東西拉下來（只做快進） |
+| Push | 把本機提交推上遠端 |
+| Worktree | 同一個 repo 的另一個資料夾，可同時開不同分支 |
+| Hunk | diff 裡一段連續的變更 |
+
+---
+
+## 給開發者
+
+### 架構
+
+```mermaid
+flowchart LR
+  UI["面板 UI<br/>React"] -->|POST /dsh-git/api| HOST["Host 外掛<br/>src/index.js + actions.js"]
+  HOST -->|argv，不經 shell| GIT[("系統 git")]
+  GIT -->|stdout| HOST
+  HOST -->|JSON| UI
+```
+
+- **Host**：`/dsh-git/api` 一條 JSON 路由 → 動作表（`src/actions.js`）→ `ctx.subprocess` 跑 `git`；`src/git.js` 是可注入 exec 的純引擎，沒有 DSH 依賴。
+- **Client**：`sidebarRightTabs` 宣告三種分頁（面板、檔案差異、提交差異），slot 提供內容與晶片；面板狀態是 module-level store，切換主欄不會忘。
+- **資料流**：每個動作都是「讀 git → 回 JSON → 重畫」；沒有快取狀態，`status` 是唯一真相。
+- 為什麼是這個做法（跟 Cursor／VS Code 的對照）見 [docs/design.md](docs/design.md)。
+
+### 檔案結構
 
 ```
-C:\Users\user\AppData\Roaming\dsh-desktop\harness\profiles\web\
-  cordis.patch.yml                     # 末尾插入一列 git-management
-  node_modules\dsh-git-management      # junction → 這個資料夾
+src/
+  index.js          Host：/dsh-git/api 路由、同源檢查、subprocess
+  actions.js        動作表：action → argv／GitHub REST
+  git.js            Git 引擎（可注入 exec）
+  client/
+    00-util.js      React、host 呼叫、格式化、橋接
+    10-store.js     面板狀態與操作
+    15-diff.js      diff 解析（行號、並排）
+    16-graph.js     分支軌道
+    17-commit-diff.js 提交差異資料（repo#sha 快取）
+    20-icons.js     圖示
+    30-style.js     CSS
+    40-panel.js     面板 UI
+    45-diff-panel.js 檔案差異分頁
+    46-hover.js     hover 卡
+    47-commit-panel.js 提交差異分頁
+    50-plugin.js    字典＋分頁註冊
+scripts/            build / verify / render-test
+docs/               design.md、worktrees.md、commit-diff.md、reviews/
 ```
 
-安裝步驟（可重做）：
+### 驗證
 
-1. `node scripts/build.mjs`（把 `src/` 產出 `lib/index.js`、`lib/actions.js`、`lib/git.js`、`lib/client.js`）。
-2. 在 profile 的 `cordis.patch.yml` 追加：
+```bash
+npm run build        # src/ → lib/（lib 是入庫的產物）
+npm run verify       # 143 項：對真的 git 驗引擎、動作、HTTP 守衛
+npm run test:render  # 175 項：jsdom + 真的 React 渲染面板
+```
+
+### 安全邊界
+
+- `/dsh-git/api` 只吃 `content-type: application/json`（強制 preflight），加同源檢查；有 `connection` 服務時再請它拒絕一次。
+- 請求的 `path` 必須在已註冊 workspace 內（或子目錄），否則 403。
+- 檔案一律用 `:(literal)` pathspec；`commitDiff` 只接受 4–64 位 hex sha，並加 `--no-ext-diff`。
+- GitHub token 只存 localStorage；推送走本機 git 憑證。
+
+### 已知邊界
+
+- 沒有檔案監看：可見時每 8 秒輪詢 `status`，focus 時刷新。
+- 不做衝突解決器（只標示、標記解決、中止合併）。
+- 大 repo 第一次 `status --untracked-files=all` 會慢；輸出上限 6 MB。
+- 提交差異只畫 hunk、不做字元級 diff；單筆上限 60 檔。
+- 改了 Host 半（`src/index.js`、`actions.js`、`git.js`）要**完全重啟** DSH Desktop；只改 client 可 `Ctrl+R`。
+
+---
+
+## 安裝（本地開發版）
+
+1. `npm install`
+2. `npm run build`
+3. 在 DSH profile 的 `cordis.patch.yml` 末尾加：
 
    ```yaml
    - insert:
@@ -81,61 +326,18 @@ C:\Users\user\AppData\Roaming\dsh-desktop\harness\profiles\web\
          name: dsh-git-management
    ```
 
-3. 在 profile 的 `node_modules` 建立連結：`mklink /J node_modules\dsh-git-management <這個資料夾>`。
-4. **重新載入 GUI**（主視窗 `Ctrl+R`；若宿主沒熱載入新的 row，就重啟 DSH Desktop）。
-
-解除安裝：刪掉 `cordis.patch.yml` 裡那三行（備份在 `cordis.patch.yml.bak-git-management`）與 `node_modules\dsh-git-management` 連結。
+4. 在 profile 的 `node_modules` 建立連結：`mklink /J node_modules\dsh-git-management <這個資料夾>`
+5. 重啟 DSH Desktop。
 
 ---
 
-## 五、驗證
+## 文件
 
-```bash
-npm run build        # 產出 lib/
-npm run verify       # 143 項：Git 引擎 + 動作表 + 邊界狀態（bare／detached／merge／衝突）+ 提交差異 + HTTP 路由守衛 + 打包檢查
-npm run test:render  # 175 項：jsdom + 真的 React，掛起 lib/client.js 渲染面板、檔案 diff 與提交 diff 分頁
-```
+- [docs/design.md](docs/design.md) — 為什麼用系統 `git`、跟 Cursor／VS Code 的對照
+- [docs/worktrees.md](docs/worktrees.md) — 工作樹功能的設計與取捨
+- [docs/commit-diff.md](docs/commit-diff.md) — 提交差異分頁的設計與取捨
+- [docs/reviews/](docs/reviews/) — 五份專家評審與交叉評審
 
-- `scripts/verify.mjs`：對真的 `git` 二進位驗證 status/stage/commit/diff/log/branches/remote 與錯誤處理，含路徑有空白、含 `[` 的檔名，以及 bare repo、detached HEAD、merge 統計、`merge --abort`；提交差異另有自己的 repo，驗 root commit、單行修改只帶 hunk、改名（舊路徑，含改名後又改內容）、刪除、二進位、只改 mode、merge 的第一父提交、空提交，以及超過 60 檔時只讀前 60 個 patch；另有一段直接驅動 `/dsh-git/api` 的 handler，驗證 Content-Type 與工作區白名單。
-- `scripts/render-test.mjs`：載入真正的 `lib/client.js`、呼叫 `apply(ctx)`、檢查兩個 slot 註冊、渲染面板、點一個檔案確認 diff 被請求並上色；點一列提交確認開的是 `git-commit` 分頁、參數是該提交、分頁把檔案竪著畫出來（含改名來源與截斷說明）、可折疊、可返回、`Esc` 關閉、隱藏分頁不理會 `Esc`、兩個分頁開同一提交只讀一次；另有衝突狀態（擋提交、標記解決、中止合併）與差異頁動作列的斷言。
+## 授權
 
-## 六、安全邊界
-
-- `/dsh-git/api` 只接受 `content-type: application/json`——其他型別回 415，這會強制瀏覽器先送 preflight，於是外部頁面無法用「簡單請求」驅動本機 git。
-- 請求裡的 `path` 必須落在已註冊的工作區內（或其子目錄），否則回 403；宿主沒有工作區清單時維持舊行為，不把面板鎖死。
-- 所有檔案路徑都以 `:(literal)` pathspec 傳給 git，檔名含 `[ ] ? *` 時也只會動到那一個檔（見 `scripts/verify.mjs` 的 bracket 測試）。
-
-## 六、程式結構
-
-```
-src/
-  index.js          Host 外掛：/dsh-git/api 路由、同源檢查、subprocess 執行 git
-  actions.js        動作表：action 名稱 → argv／GitHub REST，唯一的命令組裝處
-  git.js            Git 引擎（可注入 exec，無 DSH 依賴）＋ status/diff 解析
-  client/
-    00-util.js      React、host 呼叫、格式化、layout/workspace 橋
-    10-store.js     面板狀態（跨掛載保存）與所有操作
-    15-diff.js      中央 diff 的目標狀態＋patch 解析（行號、並排配對）
-    16-graph.js     歷史卡右側的分支軌道（lane 配置＋SVG）
-    17-commit-diff.js 提交分頁的資料（按 repo#sha 快取、LRU、patch 解析）
-    20-icons.js     手繪 SVG 圖示
-    30-style.js     主題 token 驅動的 CSS
-    40-panel.js     面板 UI（分支列、提交框、檔案列、工作樹、歷史卡、GitHub；`compact` 為右欄窄版）
-    45-diff-panel.js 中央欄的 diff 面板（統一／並排、上一個／下一個）
-    46-hover.js     提交／分支的 hover 詳情卡（portal、延遲、快取）
-    47-commit-panel.js 提交分頁的面板（標頭、每檔一區塊、折疊、吸頂）
-    50-plugin.js    字典 + 分頁型別（`sidebarRightTabs`，含 `multiple` 的提交分頁）+ slot 註冊
-scripts/
-  build.mjs         無 bundler：ESM 直送 + ModuleLoader 包裝
-  verify.mjs        Git 引擎驗證
-  render-test.mjs   jsdom 渲染驗證
-docs/
-  worktrees.md      工作樹功能的設計與取捨（含被 grill 的問題）
-  commit-diff.md    提交差異分頁的設計與取捨（含被 grill 的問題）
-```
-
-## 七、已知邊界
-
-- 主機路由掛在 `/dsh-git/api`（在核心 `/api` 認證圍籬之外），因此自己做了同源檢查，並在 `connection` 服務存在時請它做一次 `requestRejection`。只監聽 loopback 時風險與其他本機工具相同。
-- 沒有 `gh` CLI 也能用：GitHub 走 REST + PAT。若之後裝了 `gh`，可以改走 `gh auth token` 免手動貼 token。
-- 大型 repo 的第一次 `status --untracked-files=all` 會慢；與 VS Code 一樣有輸出上限（6 MB）。
+MIT
