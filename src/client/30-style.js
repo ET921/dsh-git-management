@@ -11,14 +11,10 @@ const STYLE_MARKER = 'dsh-git-management/panel.css'
 
 /** The stylesheet text. */
 const PANEL_CSS = `
-.gmg-root {
-  height: 100%;
-  overflow: auto;
-  box-sizing: border-box;
-  background: var(--dsw-alias-bg-base);
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  line-height: 1.45;
+/* Palette and surfaces live on :root, not on .gmg-root: the hover cards are
+   portalled to <body>, so a token defined on the panel is simply absent there —
+   which is how their stat colours and mono text used to come out grey. */
+:root {
   --gmg-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Saturated marks for where things live. The theme's accents are calmer than
      a git graph needs, so the panel carries its own vivid set: blue is this
@@ -36,16 +32,18 @@ const PANEL_CSS = `
   --gmg-bad: #f45c5c;
   /* Surfaces. The theme's own layers are tuned for a page, not for a column of
      cards on a page: on the light theme they are white on white, so the cards
-     and the buttons inside them disappeared. These are resolved per theme at
-     the bottom of this block. */
+     and the buttons inside them disappeared. These are resolved per theme in
+     the block below. */
   --gmg-surface: var(--dsw-alias-bg-layer-2);
   --gmg-control: var(--dsw-alias-bg-layer-2);
-  --gmg-hover: var(--dsw-alias-bg-layer-2);
+  /* A hover has to be a step off the surface. Both used to resolve to
+     bg-layer-2, so every row highlight was invisible on the dark theme. */
+  --gmg-hover: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 90%, var(--dsw-alias-label-primary) 10%);
   --gmg-edge: var(--dsw-alias-border-l2);
 }
 /* On a white surface the same hue has to be darker to stay readable. */
 @media (prefers-color-scheme: light) {
-  .gmg-root {
+  :root {
     --gmg-local: #1d4ed8;
     --gmg-local-soft: rgba(29, 78, 216, .16);
     --gmg-head-ink: #ffffff;
@@ -63,6 +61,15 @@ const PANEL_CSS = `
     --gmg-edge: color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent);
   }
   .gmg-card { box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
+}
+.gmg-root {
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 1.45;
 }
 .gmg-page {
   max-width: 940px;

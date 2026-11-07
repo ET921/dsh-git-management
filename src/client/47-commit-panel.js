@@ -179,16 +179,22 @@ function CommitDiffPanel(props) {
   if (loading) {
     body = h('div', { className: 'gmg-empty' }, t('commitDiffLoading'))
   } else if (error !== null) {
+    // The page can be newer than the process that serves it: the host half is
+    // loaded once, so its action table only gains `commitDiff` after a restart.
+    // Saying "unknown action" without that sentence sends people to reload the
+    // page, which cannot fix it.
+    const staleHost = /unknown action/i.test(String(error))
     body = h(
       'div',
       { className: 'gmg-cdiff-failure' },
       h('div', { className: 'gmg-empty' }, error),
+      staleHost ? h('div', { className: 'gmg-hint', style: { padding: '0 12px 10px' } }, t('commitDiffStale')) : null,
       h(
         'div',
         { className: 'gmg-form' },
         h(
           'button',
-          { className: 'gmg-btn is-primary', type: 'button', onClick: () => (typeof props.onRetry === 'function' ? props.onRetry() : null) },
+          { className: 'gmg-btn', type: 'button', onClick: () => (typeof props.onRetry === 'function' ? props.onRetry() : null) },
           t('commitDiffRetry'),
         ),
       ),

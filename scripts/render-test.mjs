@@ -261,9 +261,14 @@ global.IS_REACT_ACT_ENVIRONMENT = true
 global.localStorage = dom.window.localStorage
 
 const calls = []
+/** When set, every `commitDiff` call fails with this message (a stale host). */
+let commitDiffFailure = null
 global.fetch = async (url, init) => {
   const body = JSON.parse(init.body)
   calls.push({ url: String(url), action: body.action, params: body.params })
+  if (body.action === 'commitDiff' && commitDiffFailure !== null) {
+    return { ok: false, status: 404, json: async () => ({ ok: false, error: commitDiffFailure }) }
+  }
   return { ok: true, status: 200, json: async () => ({ ok: true, result: respond(body.action, body.params) }) }
 }
 
@@ -822,6 +827,19 @@ if (fileRow !== null) {
         commitContainer.querySelector('.gmg-cdiff-scroll .gmg-cdiff-file > .gmg-cdiff-filehead') !== null,
         commitContainer.querySelector('.gmg-cdiff-scroll')?.innerHTML.slice(0, 160),
       )
+      check(
+        'the palette is declared on :root so portalled cards keep their colours',
+        /:root\s*\{[^}]*--gmg-ok:/.test(commitCss) && /:root\s*\{[^}]*--gmg-bad:/.test(commitCss),
+        commitCss.slice(0, 240),
+      )
+      const surfaceToken = /--gmg-surface:\s*([^;]+);/.exec(commitCss)?.[1]?.trim()
+      const hoverToken = /--gmg-hover:\s*([^;]+);/.exec(commitCss)?.[1]?.trim()
+      check('the hover is a step off the card surface', typeof surfaceToken === 'string' && typeof hoverToken === 'string' && surfaceToken !== hoverToken, { surfaceToken, hoverToken })
+      check(
+        'the stat colours and row highlight are drawn from those tokens',
+        /\.gmg-stat-add\s*\{[^}]*--gmg-ok/.test(commitCss) && /\.gmg-stat-del\s*\{[^}]*--gmg-bad/.test(commitCss) && /\.gmg-commit-row:hover\s*\{[^}]*var\(--gmg-hover\)/.test(commitCss),
+        commitCss.slice(-400),
+      )
 
       // Folding one block leaves its neighbour alone.
       const firstHead = commitContainer.querySelector('.gmg-cdiff-filehead')
@@ -901,6 +919,40 @@ if (fileRow !== null) {
         hiddenRoot.unmount()
       })
       hiddenContainer.remove()
+
+      // A page newer than the host process: the action is unknown until a full
+      // restart, and the panel must say that instead of sending the reader to
+      // reload a page that is already current.
+      commitDiffFailure = 'unknown action: commitDiff'
+      const staleParams = { ...params, sha: 'feedfacefeedface', short: 'feedfac', subject: 'a commit the old host does not know' }
+      const staleContainer = document.createElement('div')
+      document.body.appendChild(staleContainer)
+      const staleRoot = createRoot(staleContainer)
+      await act(async () => {
+        staleRoot.render(
+          React.createElement(commitRegistration.component, {
+            ...commitRegistration.declaration.inject(),
+            actions: { close: () => {} },
+            useTabInfo: () => ({ tab: { id: 'tab-stale', visible: true, navigation: { params: staleParams, revision: 1 } } }),
+          }),
+        )
+        await new Promise((resolve) => setTimeout(resolve, 30))
+      })
+      check('a stale host is explained, not just reported', (staleContainer.textContent ?? '').includes('完全結束'), staleContainer.textContent?.slice(0, 300))
+      check('the stale host still offers retry', staleContainer.querySelector('.gmg-form button') !== null)
+      commitDiffFailure = null
+      const retryButton = staleContainer.querySelector('.gmg-form button')
+      if (retryButton !== null) {
+        await act(async () => {
+          retryButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+          await new Promise((resolve) => setTimeout(resolve, 40))
+        })
+        check('retry after the restart loads the commit', staleContainer.querySelectorAll('.gmg-cdiff-file').length === 3, staleContainer.querySelectorAll('.gmg-cdiff-file').length)
+      }
+      await act(async () => {
+        staleRoot.unmount()
+      })
+      staleContainer.remove()
 
       const backButton = [...commitContainer.querySelectorAll('button')].find((button) => (button.textContent ?? '').includes('返回'))
       if (backButton !== undefined) {
