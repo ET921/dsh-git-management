@@ -113,8 +113,9 @@ sequenceDiagram
 
 ### 歷史與分支軌道
 
-- 左邊是提交列（主旨＋ref 徽章），右邊是 SVG 分支軌道：merge 是彎出去的邊，所有分支都在同一張圖。
-- ref 徽章用顏色＋圖示區分「目前檢出／其他本機分支／遠端／標籤」。
+- 左邊是提交列（主旨＋ref 徽章），右邊是 SVG 分支軌道：merge 是彎出去的邊，主線固定在同一欄，分支只在右側開。
+- 預設只走**當前分支**這條線，和 Cursor 一樣；要連其他分支一起看，按歷史標頭的「當前分支／全部分支」。
+- ref 徽章只標**當前檢出、它的已發佈副本、預設分支與標籤**。指向同一提交的其他分支不掛徽章，它們在 hover 卡與分支下拉裡。
 - hover 提交可看 sha、作者、時間、內文、`N 個檔案 +X −Y`。
 - 預設顯示 10 筆，可展開到 40 筆。
 
@@ -273,8 +274,8 @@ docs/               design.md、worktrees.md、commit-diff.md、reviews/
 
 ```bash
 npm run build        # src/ → lib/（lib 是入庫的產物）
-npm run verify       # 143 項：對真的 git 驗引擎、動作、HTTP 守衛
-npm run test:render  # 175 項：jsdom + 真的 React 渲染面板
+npm run verify       # 147 項：對真的 git 驗引擎、動作、HTTP 守衛
+npm run test:render  # 177 項：jsdom + 真的 React 渲染面板
 ```
 
 ### 安全邊界

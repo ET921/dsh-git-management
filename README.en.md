@@ -113,8 +113,9 @@ sequenceDiagram
 
 ### History and branch lanes
 
-- The commit list on the left; an SVG lane rail on the right. Merges bend outwards and every branch is on the same graph.
-- Ref badges use colour **and** an icon for "checked out / other local / remote / tag".
+- The commit list on the left; an SVG lane rail on the right. Merges bend outwards, the main line keeps one column and branches open to its right.
+- The rail follows the **checked-out branch** by default, the way Cursor does; press "Branch / All refs" in the history header to widen it.
+- A ref badge marks the **checkout, its published copy, the default branch and tags**. Branches that are none of these stay in the hover card and the branch menu.
 - Hover a commit for sha, author, time, message and `N files +X −Y`.
 - Ten commits by default, expandable to forty.
 
@@ -273,8 +274,8 @@ docs/               design.md, worktrees.md, commit-diff.md, reviews/
 
 ```bash
 npm run build        # src/ → lib/ (lib is checked in)
-npm run verify       # 143 checks: engine, actions, HTTP guards against real git
-npm run test:render  # 175 checks: jsdom + real React rendering
+npm run verify       # 147 checks: engine, actions, HTTP guards against real git
+npm run test:render  # 177 checks: jsdom + real React rendering
 ```
 
 ### Security boundaries
