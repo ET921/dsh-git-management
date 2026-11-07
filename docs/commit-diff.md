@@ -18,8 +18,8 @@ DSH 的右側邊欄有完整的 tab 系統，所以照同一個模型落地：�
 ```
 git rev-parse --verify --quiet <sha>^{commit}          # 確認物件、拿完整 sha
 git show -s --pretty=... <sha>                         # 作者、時間、訊息、父提交
-git show --numstat -z --format= [--diff-merges=first-parent] <sha>
-git show --format= --patch --unified=3 --find-renames ... <sha> -- :(literal)<path>
+git show --numstat -z --format= --find-renames --no-ext-diff [--diff-merges=first-parent] <sha>
+git show --format= --patch --unified=3 --find-renames --no-ext-diff ... <sha> -- :(literal)<path>
 ```
 
 - `--numstat -z` 一次拿到每個檔案的 `+N −N` 與改名配對（`0\t0\t\0old\0new\0`），路徑不被引號或 tab 破壞。

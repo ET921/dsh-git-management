@@ -496,6 +496,21 @@ console.log('\n# commit diff (one history row → one tab)')
     const empty = await actions.handle('commitDiff', { path: dir, sha: emptySha })
     check('an empty commit has no files', empty.files.length === 0 && empty.total === 0, empty)
 
+    // The cap: a commit larger than the tab draws is still counted in full,
+    // and the tab is told that it only holds the first block of patches.
+    await mkdir(join(dir, 'bulk'), { recursive: true })
+    for (let index = 0; index < 65; index += 1) {
+      await writeFile(join(dir, 'bulk', `f-${String(index).padStart(2, '0')}.txt`), `line ${index}\n`)
+    }
+    await exec(dir, ['add', '-A'])
+    await exec(dir, ['commit', '-m', 'sixty-five new files'])
+    const bulkSha = await revParse()
+    const bulk = await actions.handle('commitDiff', { path: dir, sha: bulkSha })
+    check('a commit past the cap still reports every file', bulk.total === 65, bulk.total)
+    check('only the first sixty patches are read', bulk.files.length === 60, bulk.files.length)
+    check('the tab is told the list is truncated', bulk.truncated === true, bulk.truncated)
+    check('the stat line still covers the whole commit', bulk.additions === 65, bulk.additions)
+
     const invalid = await actions.handle('commitDiff', { path: dir, sha: 'not-a-sha' }).then(
       () => 'resolved',
       () => 'rejected',

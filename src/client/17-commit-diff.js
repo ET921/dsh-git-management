@@ -86,6 +86,7 @@ function setCommitView(key, patch) {
     const dropped = droppable.pop()
     gmgCommitOrder = gmgCommitOrder.filter((entry) => entry !== dropped)
     gmgCommitViews.delete(dropped)
+    gmgCommitTokens.delete(dropped)
   }
   notifyCommitViews()
 }

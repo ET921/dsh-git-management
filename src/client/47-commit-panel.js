@@ -150,7 +150,7 @@ function CommitDiffPanel(props) {
       commit?.date ? h('span', { className: 'gmg-cdiff-meta' }, relativeTime(commit.date, lang)) : null,
       commit?.merge === true ? h('span', { className: 'gmg-gh-label' }, t('commitDiffMergeBadge')) : null,
       h('span', { className: 'gmg-spacer' }),
-      h('span', { className: 'gmg-cdiff-meta', title: t('hoverStatFiles', { files: total }) }, t('commitDiffFileCount', { files: total })),
+      h('span', { className: 'gmg-cdiff-meta' }, t('commitDiffFileCount', { files: total })),
       additions > 0 ? h('span', { className: 'gmg-add-count gmg-stats' }, `+${additions}`) : null,
       deletions > 0 ? h('span', { className: 'gmg-del-count gmg-stats' }, `-${deletions}`) : null,
       files.length > 0
