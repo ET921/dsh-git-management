@@ -145,6 +145,11 @@ const zh = {
   hoverStatDeletions: '{deletions} 行刪除(-)',
   hoverStatSeparator: '，',
   hoverNoBranch: '這個分支還沒有提交。',
+  refHead: '目前檢出（本機）',
+  refLocal: '本機分支',
+  refRemote: '遠端分支',
+  refTag: '標籤',
+  refDetached: '分離 HEAD',
 }
 
 /** English copy. */
@@ -270,6 +275,11 @@ const en = {
   hoverStatDeletions: '{deletions} deletions(-)',
   hoverStatSeparator: ', ',
   hoverNoBranch: 'This branch has no commits yet.',
+  refHead: 'checked out here',
+  refLocal: 'local branch',
+  refRemote: 'remote branch',
+  refTag: 'tag',
+  refDetached: 'detached HEAD',
 }
 
 /**

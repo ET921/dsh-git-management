@@ -280,6 +280,40 @@ function historyRefs(commit, branches) {
 }
 
 /**
+ * The glyph that goes inside a ref chip.
+ *
+ * Colour alone would be the only difference between "this branch lives on my
+ * disk" and "this branch lives on the server", which a third of readers cannot
+ * use. The glyph carries the same fact a second time: a filled dot for the
+ * checkout, a branch mark for another local branch, a cloud for a remote, a tag
+ * for a release.
+ *
+ * @param kind - one of `head`, `branch`, `remote`, `tag`, `detached`.
+ * @returns the icon element, or null.
+ */
+function refGlyph(kind) {
+  if (kind === 'head') return h('span', { className: 'gmg-ref-dot' })
+  if (kind === 'branch') return h(IconBranch, { size: 9 })
+  if (kind === 'remote') return h(IconCloud, { size: 10 })
+  if (kind === 'tag') return h(IconTag, { size: 9 })
+  return null
+}
+
+/**
+ * Where one ref lives, in words, for the chip's tooltip.
+ * @param kind - one of `head`, `branch`, `remote`, `tag`, `detached`.
+ * @param t - translator.
+ * @returns the label.
+ */
+function refScope(kind, t) {
+  if (kind === 'head') return t('refHead')
+  if (kind === 'branch') return t('refLocal')
+  if (kind === 'remote') return t('refRemote')
+  if (kind === 'tag') return t('refTag')
+  return t('refDetached')
+}
+
+/**
  * The history card: the commit list on the left, the lane rail down its right.
  *
  * The rail is one SVG for the whole list rather than one per row, because a lane
@@ -327,7 +361,7 @@ function HistoryCard(props) {
                 h(
                   'div',
                   { className: 'gmg-commit-row' },
-                  shown.map((ref) => h('span', { key: ref.kind + ref.name, className: `gmg-ref is-${ref.kind}`, title: ref.name }, ref.name)),
+                  shown.map((ref) => h('span', { key: ref.kind + ref.name, className: `gmg-ref is-${ref.kind}`, title: `${refScope(ref.kind, t)}：${ref.name}` }, refGlyph(ref.kind), ref.name)),
                   extra > 0 ? h('span', { className: 'gmg-ref-more', title: refs.map((ref) => ref.name).join(', ') }, `+${extra}`) : null,
                   h('span', { className: 'gmg-subject', title: commit.subject }, commit.subject),
                   h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),
@@ -732,14 +766,20 @@ function BranchBar(props) {
       h(BranchPicker, { status, branches, t }),
     ),
     upstream === null
-      ? h('span', { className: 'gmg-track' }, t('notPublished'))
+      ? h('span', { className: 'gmg-track', title: t('notPublished') }, h(IconCloud, { size: 12 }), t('notPublished'))
       : h(
           'span',
-          { className: 'gmg-track', title: upstream },
+          {
+            // The relationship to the server, in colour: level with it, ahead of
+            // it, behind it, or both at once. The arrows carry the same fact.
+            className: `gmg-track is-${ahead > 0 && behind > 0 ? 'diverged' : ahead > 0 ? 'ahead' : behind > 0 ? 'behind' : 'synced'}`,
+            title: `${upstream} · ${t('refRemote')}`,
+          },
           h(IconCloud, { size: 12 }),
           upstream,
           ahead > 0 ? h('span', { className: 'gmg-ahead' }, `↑${ahead}`) : null,
           behind > 0 ? h('span', { className: 'gmg-behind' }, `↓${behind}`) : null,
+          ahead === 0 && behind === 0 ? h('span', { className: 'gmg-synced' }, '✓') : null,
         ),
     h('span', { className: 'gmg-spacer' }),
     h(

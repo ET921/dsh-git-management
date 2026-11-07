@@ -20,6 +20,9 @@ const PANEL_CSS = `
   font-size: 13px;
   line-height: 1.45;
   --gmg-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* The one hue the theme does not provide: "this ref lives on the server".
+     Mixed toward the label colour so it stays legible in light and dark. */
+  --gmg-remote: color-mix(in srgb, #8b7cf6 70%, var(--dsw-alias-label-primary));
 }
 .gmg-page {
   max-width: 940px;
@@ -117,8 +120,14 @@ const PANEL_CSS = `
 .gmg-branchmenu-empty { padding: 8px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .gmg-branch.is-detached { color: var(--dsw-alias-state-warn-primary); }
 .gmg-track { color: var(--dsw-alias-label-secondary); font-size: 11px; font-family: var(--gmg-mono); display: inline-flex; align-items: center; gap: 4px; }
+/* Where the local branch stands against its remote, at a glance. */
+.gmg-track.is-synced { color: var(--dsw-alias-state-success-primary); }
+.gmg-track.is-ahead { color: var(--dsw-alias-brand-primary); }
+.gmg-track.is-behind { color: var(--dsw-alias-state-warn-primary); }
+.gmg-track.is-diverged { color: var(--dsw-alias-state-error-primary); }
 .gmg-ahead { color: var(--dsw-alias-state-success-primary); }
 .gmg-behind { color: var(--dsw-alias-state-warn-primary); }
+.gmg-synced { color: var(--dsw-alias-state-success-primary); }
 .gmg-spacer { flex: 1; }
 .gmg-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
@@ -224,22 +233,26 @@ const PANEL_CSS = `
 .gmg-graph-dot { stroke-width: 1.6; }
 .gmg-ref {
   flex: none; max-width: 108px;
-  display: inline-flex; align-items: center;
+  display: inline-flex; align-items: center; gap: 3px;
   height: 16px; padding: 0 5px; border-radius: 5px;
   font-family: var(--gmg-mono); font-size: 10.5px; line-height: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Where a ref lives is the point of these colours: blue is this machine,
+   violet is the server. The hue is mixed toward the label colour so it keeps
+   its contrast in both themes without a second palette. */
 .gmg-ref.is-head {
   color: var(--dsw-alias-brand-primary);
-  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 26%, transparent);
+  font-weight: 650;
 }
 .gmg-ref.is-branch {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
 }
 .gmg-ref.is-remote {
-  color: var(--dsw-alias-label-secondary);
-  background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
+  color: var(--gmg-remote);
+  background: color-mix(in srgb, var(--gmg-remote) 16%, transparent);
 }
 .gmg-ref.is-tag {
   color: var(--dsw-alias-state-warn-primary);
@@ -248,6 +261,11 @@ const PANEL_CSS = `
 .gmg-ref.is-detached {
   color: var(--dsw-alias-state-warn-primary);
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);
+}
+.gmg-ref svg { flex: none; opacity: .9; }
+.gmg-ref-dot {
+  flex: none; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 28%, transparent);
 }
 .gmg-ref-more { flex: none; font-size: 10px; color: var(--dsw-alias-label-secondary); }
 .gmg-sha {

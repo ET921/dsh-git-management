@@ -338,6 +338,17 @@ check('panel reads status', calls.some((call) => call.action === 'status'), call
 check('panel reads history', calls.some((call) => call.action === 'log'), calls.map((call) => call.action))
 check('title is localized to Chinese', text().includes('源代码管理'), text().slice(0, 200))
 check('branch is shown', text().includes('main'), text().slice(0, 200))
+
+// The local/remote relationship in the branch bar: ahead 2, behind 1 is the
+// diverged case, and it must say so in class as well as in arrows.
+{
+  const track = container.querySelector('.gmg-track')
+  check('the upstream line exists', track !== null, container.querySelector('.gmg-branchbar')?.textContent)
+  check('a diverged branch is marked as diverged', track?.classList.contains('is-diverged') === true, track?.className)
+  check('the arrow counts are still rendered', (track?.textContent ?? '').includes('↑2') && (track?.textContent ?? '').includes('↓1'), track?.textContent)
+  const trackCss = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
+  check('each sync state has its own colour', ['.gmg-track.is-synced', '.gmg-track.is-ahead', '.gmg-track.is-behind', '.gmg-track.is-diverged'].every((rule) => trackCss.includes(rule)), trackCss.match(/\.gmg-track\.is-[a-z]+/g))
+}
 check('staged group is shown', text().includes('已暂存的更改'), text().slice(0, 400))
 check('unstaged group is shown', text().includes('更改'), text().slice(0, 400))
 check('staged file name is shown', text().includes('App.tsx'), text().slice(0, 400))
@@ -362,6 +373,18 @@ check('history subject is rendered', text().includes('wire the sidebar panel'), 
   check('the current branch is labelled on its commit', container.querySelector('.gmg-ref.is-head')?.textContent === 'main', container.querySelector('.gmg-ref.is-head')?.textContent)
   check('the remote ref is labelled too', container.querySelector('.gmg-ref.is-remote')?.textContent === 'origin/main', container.querySelector('.gmg-ref.is-remote')?.textContent)
   check('a local branch ref is labelled', [...container.querySelectorAll('.gmg-ref.is-branch')].some((ref) => ref.textContent === 'dev'), [...container.querySelectorAll('.gmg-ref')].map((ref) => ref.className))
+
+  // Where a ref lives is shown twice: colour, and a glyph for readers who
+  // cannot rely on the hue.
+  const headChip = container.querySelector('.gmg-ref.is-head')
+  const remoteChip = container.querySelector('.gmg-ref.is-remote')
+  const branchChip = container.querySelector('.gmg-ref.is-branch')
+  check('the checked-out ref carries a filled dot', headChip?.querySelector('.gmg-ref-dot') !== null, headChip?.innerHTML)
+  check('a remote ref carries the cloud glyph', remoteChip?.querySelector('svg') !== null, remoteChip?.innerHTML)
+  check('a local branch ref carries the branch glyph', branchChip?.querySelector('svg') !== null, branchChip?.innerHTML)
+  const refCss = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
+  check('local and remote are different hues', /--gmg-remote:\s*color-mix/.test(refCss) && /\.gmg-ref\.is-remote\s*\{[^}]*var\(--gmg-remote\)/.test(refCss), refCss.match(/--gmg-remote[^;]*/)?.[0])
+  check('a local branch is the brand hue', /\.gmg-ref\.is-branch\s*\{[^}]*var\(--dsw-alias-brand-primary\)/.test(refCss))
 }
 check('github card names the remote', text().includes('acme/demo'), text().slice(0, 600))
 check('the github card lists the pulls tab', text().includes('拉取请求'), text().slice(-400))

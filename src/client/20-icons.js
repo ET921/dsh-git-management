@@ -175,3 +175,9 @@ const IconScissors = makeIcon([
   h('path', { key: 'c', d: 'M5.2 5.2 13 12.4' }),
   h('path', { key: 'd', d: 'M5.2 10.8 13 3.6' }),
 ])
+
+/** A release marker: the tag chip's glyph, so the chip is not colour alone. */
+const IconTag = makeIcon([
+  h('path', { key: 'a', d: 'M2.6 7.4V3.4a.8.8 0 0 1 .8-.8h4l6 6-4.8 4.8-6-6Z' }),
+  h('circle', { key: 'b', cx: 5.2, cy: 5.2, r: 1 }),
+])
