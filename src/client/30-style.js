@@ -11,9 +11,14 @@ const STYLE_MARKER = 'dsh-git-management/panel.css'
 
 /** The stylesheet text. */
 const PANEL_CSS = `
-/* Palette and surfaces live on :root, not on .gmg-root: the hover cards are
-   portalled to <body>, so a token defined on the panel is simply absent there —
-   which is how their stat colours and mono text used to come out grey. */
+/* Two layers of tokens, deliberately in two places.
+   The palette is literal and lives on :root, because the hover cards are
+   portalled to <body>: a token declared on .gmg-root is absent there, and the
+   card's stat colours and mono text used to come out grey.
+   The surface tokens reference the theme aliases, and DSH publishes those on
+   <body>, not on <html> — so they must stay on .gmg-root, which is inside that
+   scope. Declaring them on :root made every value invalid, which is why the row
+   hover was transparent instead of a highlight. */
 :root {
   --gmg-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Saturated marks for where things live. The theme's accents are calmer than
@@ -30,16 +35,6 @@ const PANEL_CSS = `
   --gmg-ok: #22c55e;
   --gmg-warn: #f59e0b;
   --gmg-bad: #f45c5c;
-  /* Surfaces. The theme's own layers are tuned for a page, not for a column of
-     cards on a page: on the light theme they are white on white, so the cards
-     and the buttons inside them disappeared. These are resolved per theme in
-     the block below. */
-  --gmg-surface: var(--dsw-alias-bg-layer-2);
-  --gmg-control: var(--dsw-alias-bg-layer-2);
-  /* A hover has to be a step off the surface. Both used to resolve to
-     bg-layer-2, so every row highlight was invisible on the dark theme. */
-  --gmg-hover: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 90%, var(--dsw-alias-label-primary) 10%);
-  --gmg-edge: var(--dsw-alias-border-l2);
 }
 /* On a white surface the same hue has to be darker to stay readable. */
 @media (prefers-color-scheme: light) {
@@ -54,13 +49,7 @@ const PANEL_CSS = `
     --gmg-ok: #15803d;
     --gmg-warn: #b45309;
     --gmg-bad: #b91c1c;
-    /* Cards sit a step off the page, controls a step off the card. */
-    --gmg-surface: color-mix(in srgb, var(--dsw-alias-bg-base) 93%, #000);
-    --gmg-control: color-mix(in srgb, var(--dsw-alias-bg-base) 86%, #000);
-    --gmg-hover: color-mix(in srgb, var(--dsw-alias-bg-base) 90%, #000);
-    --gmg-edge: color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent);
   }
-  .gmg-card { box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
 }
 .gmg-root {
   height: 100%;
@@ -70,6 +59,27 @@ const PANEL_CSS = `
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
   line-height: 1.45;
+  /* Surfaces. The theme's own layers are tuned for a page, not for a column of
+     cards on a page: on the light theme they are white on white, so the cards
+     and the buttons inside them disappeared. These are resolved per theme in
+     the block below. */
+  --gmg-surface: var(--dsw-alias-bg-layer-2);
+  --gmg-control: var(--dsw-alias-bg-layer-2);
+  /* A hover has to be a step off the surface. Mixing the surface with itself
+     (the old value) painted the highlight in exactly the card's colour, and a
+     percentage of the *text* colour is the one tint that reads in both themes
+     without knowing which one the app is actually in. */
+  --gmg-hover: color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);
+  --gmg-edge: var(--dsw-alias-border-l2);
+}
+@media (prefers-color-scheme: light) {
+  .gmg-root {
+    /* Cards sit a step off the page, controls a step off the card. */
+    --gmg-surface: color-mix(in srgb, var(--dsw-alias-bg-base) 93%, #000);
+    --gmg-control: color-mix(in srgb, var(--dsw-alias-bg-base) 86%, #000);
+    --gmg-edge: color-mix(in srgb, var(--dsw-alias-label-primary) 22%, transparent);
+  }
+  .gmg-card { box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
 }
 .gmg-page {
   max-width: 940px;
@@ -499,7 +509,9 @@ const PANEL_CSS = `
 .gmg-hoverzone.is-head {
   display: flex; align-items: center; gap: 7px;
   position: sticky; top: 0; z-index: 1;
-  background: var(--gmg-hover);
+  /* The card is portalled out of .gmg-root, so it reads the theme token
+     directly rather than the panel's --gmg-hover. */
+  background: var(--dsw-alias-bg-layer-2);
   border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 .gmg-hoverzone.is-head .gmg-sha {

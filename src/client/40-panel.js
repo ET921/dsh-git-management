@@ -374,7 +374,6 @@ function HistoryCard(props) {
                     className: 'gmg-commit-row',
                     role: 'button',
                     tabIndex: 0,
-                    title: `${commit.short} — ${t('openCommitDiffHint')}`,
                     onClick: open,
                     onKeyDown: (event) => {
                       if (event.key === 'Enter' || event.key === ' ') {

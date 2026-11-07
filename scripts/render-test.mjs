@@ -476,9 +476,14 @@ check('commit button is rendered disabled without a message', container.querySel
 // The light theme needs its own surfaces: the theme's layers are white on white.
 {
   const css = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
-  const lightBlock = css.slice(css.indexOf('prefers-color-scheme: light'))
-  const scope = lightBlock.slice(0, lightBlock.indexOf('}'))
-  check('cards, controls and edges get light-theme values', ['--gmg-surface', '--gmg-control', '--gmg-edge'].every((name) => scope.includes(`${name}:`)), scope.slice(0, 160))
+  // The literal palette lives on :root and the surfaces on .gmg-root, so the
+  // light overrides come as two blocks under one media query; both count.
+  const lightCss = css.slice(css.indexOf('@media (prefers-color-scheme: light)'))
+  check(
+    'cards, controls and edges get light-theme values',
+    ['--gmg-surface', '--gmg-control', '--gmg-edge'].every((name) => lightCss.includes(`${name}:`)),
+    lightCss.slice(0, 200),
+  )
   check('the card reads its theme-aware surface', /\.gmg-card\s*\{[^}]*var\(--gmg-surface\)/.test(css))
   check('a button reads its theme-aware surface', /\.gmg-btn\s*\{[^}]*var\(--gmg-control\)/.test(css))
 }
@@ -773,6 +778,11 @@ if (fileRow !== null) {
     commitRow?.getAttribute('role') === 'button' && commitRow?.getAttribute('tabindex') === '0',
     commitRow?.outerHTML.slice(0, 160),
   )
+  check(
+    'the row does not raise a native tooltip over the list',
+    commitRow?.getAttribute('title') === null,
+    commitRow?.getAttribute('title'),
+  )
 
   if (commitRow !== null) {
     const before = tabOpens.length
@@ -827,14 +837,28 @@ if (fileRow !== null) {
         commitContainer.querySelector('.gmg-cdiff-scroll .gmg-cdiff-file > .gmg-cdiff-filehead') !== null,
         commitContainer.querySelector('.gmg-cdiff-scroll')?.innerHTML.slice(0, 160),
       )
+      const rootBlocks = commitCss.match(/:root\s*\{[^}]*\}/g) ?? []
       check(
-        'the palette is declared on :root so portalled cards keep their colours',
-        /:root\s*\{[^}]*--gmg-ok:/.test(commitCss) && /:root\s*\{[^}]*--gmg-bad:/.test(commitCss),
-        commitCss.slice(0, 240),
+        'the literal palette sits on :root, the scope a portalled card still inherits',
+        rootBlocks.some((block) => block.includes('--gmg-ok:')) && rootBlocks.every((block) => block.includes('--dsw-alias-') === false),
+        rootBlocks.slice(0, 2),
       )
-      const surfaceToken = /--gmg-surface:\s*([^;]+);/.exec(commitCss)?.[1]?.trim()
-      const hoverToken = /--gmg-hover:\s*([^;]+);/.exec(commitCss)?.[1]?.trim()
-      check('the hover is a step off the card surface', typeof surfaceToken === 'string' && typeof hoverToken === 'string' && surfaceToken !== hoverToken, { surfaceToken, hoverToken })
+      check(
+        'surface tokens stay on .gmg-root, where the theme aliases (published on body) exist',
+        /\.gmg-root\s*\{[^}]*--gmg-surface:\s*var\(--dsw-alias-bg-layer-2\)/.test(commitCss),
+        commitCss.slice(0, 600),
+      )
+      const hoverToken = /--gmg-hover:\s*([^;]+);/.exec(commitCss)?.[1]?.trim() ?? ''
+      check(
+        'the row highlight tints the text colour instead of repeating the surface',
+        hoverToken.includes('--dsw-alias-label-primary') && hoverToken.includes('transparent'),
+        hoverToken,
+      )
+      check(
+        'the hover card header reads a theme token, not a panel-scoped one',
+        /\.gmg-hoverzone\.is-head\s*\{[^}]*background:\s*var\(--dsw-alias-bg-layer-2\)/.test(commitCss),
+        commitCss.slice(-600),
+      )
       check(
         'the stat colours and row highlight are drawn from those tokens',
         /\.gmg-stat-add\s*\{[^}]*--gmg-ok/.test(commitCss) && /\.gmg-stat-del\s*\{[^}]*--gmg-bad/.test(commitCss) && /\.gmg-commit-row:hover\s*\{[^}]*var\(--gmg-hover\)/.test(commitCss),
