@@ -579,7 +579,7 @@ export function createGit(exec) {
     // shifted every column after it. `%00` is a separator `for-each-ref` does
     // emit (verified) and no ref may contain.
     const result = await exec(cwd, ['for-each-ref', '--format=%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(objectname:short)%00%(committerdate:unix)', 'refs/heads'], { timeoutMs: 20000 })
-    if (result.code !== 0) return { current: null, branches: [] }
+    if (result.code !== 0) return { current: null, defaultRemote: null, remotes: [], branches: [] }
     const rows = String(result.stdout)
       .split(/\r?\n/)
       .filter((line) => line.trim() !== '')
@@ -594,7 +594,30 @@ export function createGit(exec) {
           date: Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000).toISOString() : null,
         }
       })
-    return { current: rows.find((row) => row.current)?.name ?? null, branches: rows }
+    // Which remote branch the repository calls its default. The graph labels
+    // this one ref (plus the checkout and tags) instead of every remote tip;
+    // `%(symref:short)` resolves `refs/remotes/origin/HEAD` to `origin/main`
+    // without a second process. A repository that never had `remote set-head`
+    // run returns nothing, and the rail then labels only the checkout.
+    const head = await exec(cwd, ['for-each-ref', '--format=%(symref:short)', 'refs/remotes/*/HEAD'], { timeoutMs: 20000 })
+    const defaultRemote =
+      head.code === 0
+        ? (String(head.stdout)
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .find((line) => line !== '') ?? null)
+        : null
+    // Nothing to resolve when the repository has no remote: `for-each-ref`
+    // simply matches nothing, and the rail then falls back to local branches.
+    const remotesResult = await exec(cwd, ['remote'], { timeoutMs: 20000 })
+    const remotes =
+      remotesResult.code === 0
+        ? String(remotesResult.stdout)
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line !== '')
+        : []
+    return { current: rows.find((row) => row.current)?.name ?? null, defaultRemote, remotes, branches: rows }
   }
 
   /**

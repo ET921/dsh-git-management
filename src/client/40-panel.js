@@ -268,16 +268,25 @@ function GitPanel(props) {
 const HISTORY_PREVIEW = 10
 
 /**
- * Read one commit's `%D` decoration.
+ * Which refs a commit row is labelled with.
  *
  * Git hands back the decoration as it prints it — `HEAD -> dev`, `origin/dev`,
  * `tag: v1.0` — so the shape of the string is the kind, except that a plain
  * name is only a local branch if this checkout actually has one by that name.
  * Everything else is a remote.
  *
+ * The rail labels at most three things per commit: the checkout, the checkout's
+ * published copy, and the repository's default branch (`defaultRemote`, read
+ * from `refs/remotes/<remote>/HEAD`). Tags ride along. Every other ref is a
+ * topic branch on someone else's line of work: on a repository with 52 branches
+ * about half the rows of a 40-row window carry one, and a row that starts with
+ * two chips has four characters left for the subject. The branch menu and the
+ * hover card still list every ref pointing at a commit, so nothing is lost —
+ * only the rail is quiet.
+ *
  * @param commit - one log row.
  * @param branches - the `branches` action result, or null before it arrives.
- * @returns `[{ name, kind }]`, `kind` being `head`, `branch`, `remote`, `tag` or `detached`.
+ * @returns `[{ name, kind }]`, `kind` being `head`, `branch`, `remote` or `tag`.
  */
 function historyRefs(commit, branches) {
   const local = new Set((branches?.branches ?? []).map((row) => row.name))
@@ -307,27 +316,36 @@ function historyRefs(commit, branches) {
   decorated.sort((a, b) => rank[a.kind] - rank[b.kind])
 
   const shown = []
+  const base = branches?.defaultRemote ?? null
   for (const ref of decorated) {
-    // A remote whose short name is `HEAD` is the server's symbolic pointer to
-    // its default branch, not a branch of its own.
-    if (ref.kind === 'remote' && ref.name.slice(ref.name.indexOf('/') + 1) === 'HEAD') continue
-    // A local branch is a chip only when it is the checkout. Cursor draws the
-    // rail in VS Code's `scm.graph.badges: 'filter'` mode, which labels a commit
-    // with the current ref, the remote refs and tags — not with every topic
-    // branch that happens to point at it. Unfiltered, six of the first ten rows
-    // on a real repository carried two chips and the subject was cut to four
-    // characters.
-    if (ref.kind === 'branch') continue
-    // The checkout already names itself; its published copy is the same branch
-    // twice, and the second chip only cost width.
-    if (ref.kind === 'remote' && current !== null && ref.name.slice(ref.name.indexOf('/') + 1) === current) continue
-    shown.push(ref)
+    if (ref.kind === 'head' || ref.kind === 'tag') {
+      shown.push(ref)
+      continue
+    }
+    // Only two remote refs are worth a chip: the checkout's published copy and
+    // the repository's default branch. Everything else on the rail is a topic
+    // branch belonging to some other line of work — Cursor labels 2 rows out of
+    // 40 for exactly this reason, and the first version of this filter, which
+    // kept every remote, still put a chip on 11 of them.
+    if (ref.kind !== 'remote') continue
+    const short = ref.name.slice(ref.name.indexOf('/') + 1)
+    // `origin/HEAD` is the server's symbolic pointer, not a branch of its own.
+    if (short === 'HEAD') continue
+    if (ref.name === base) {
+      shown.push(ref)
+      continue
+    }
+    // The checkout already names itself; without its published copy the reader
+    // loses "is my branch pushed", and with every sibling remote they lose the
+    // subject line.
+    if (current !== null && short === current) shown.push(ref)
   }
 
-  // A repository with no remote at all would otherwise label nothing. Falling
-  // back to the local branches keeps those commits readable; the filter above
-  // only suppresses a local branch when something better is on the same commit.
-  if (shown.length === 0) return decorated.filter((ref) => ref.kind === 'branch')
+  // A repository with no remote at all has nothing published to label, so the
+  // local branches are all a row can say. This is a property of the repository,
+  // not of the commit: deciding it per commit made every unpushed branch chip
+  // reappear on the rows that happened to carry no remote ref.
+  if (shown.length === 0 && (branches?.remotes ?? []).length === 0) return decorated.filter((ref) => ref.kind === 'branch')
   return shown
 }
 

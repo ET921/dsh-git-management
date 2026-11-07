@@ -100,6 +100,8 @@ function respond(action, params) {
     case 'branches':
       return {
         current: 'main',
+        defaultRemote: 'origin/dev',
+        remotes: ['origin'],
         branches: [
           { name: 'main', current: true, upstream: 'origin/main', sha: 'abc1234', date: null },
           { name: 'dev', current: false, upstream: null, sha: 'def5678', date: null },
@@ -505,8 +507,8 @@ check('history subject is rendered', text().includes('wire the sidebar panel'), 
   const rowFor = (subject) => [...container.querySelectorAll('.gmg-commit-row')].find((row) => row.textContent.includes(subject))
   const chipsOf = (subject) => [...(rowFor(subject)?.querySelectorAll('.gmg-ref') ?? [])].map((chip) => chip.textContent)
   check('the current branch is labelled on its commit', container.querySelector('.gmg-ref.is-head')?.textContent === 'main', container.querySelector('.gmg-ref.is-head')?.textContent)
-  check('the checkout is labelled once, without its published copy', chipsOf('wire the sidebar panel').join('|') === 'main', chipsOf('wire the sidebar panel'))
-  check('a remote with no local counterpart is labelled', chipsOf('main line change').join('|') === 'origin/release', chipsOf('main line change'))
+  check('the checkout is labelled with its published copy', chipsOf('wire the sidebar panel').join('|') === 'main|origin/main', chipsOf('wire the sidebar panel'))
+  check('a topic remote that is not the base gets no chip', chipsOf('main line change').length === 0, chipsOf('main line change'))
   check('a local branch with a published copy is one chip, the remote', chipsOf('side branch change').join('|') === 'origin/dev', chipsOf('side branch change'))
   check('a local branch that is not the checkout gets no chip', container.querySelector('.gmg-ref.is-branch') === null, [...container.querySelectorAll('.gmg-ref')].map((ref) => ref.className))
 
