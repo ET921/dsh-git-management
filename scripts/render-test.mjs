@@ -59,10 +59,19 @@ const STATUS = {
   conflicts: [],
 }
 
+/**
+ * The canned history: a two-lane shape, so the rail has a merge to draw.
+ *
+ *   deadbeef ─ merge1 ─ main1 ─┐
+ *                  └── side1 ──┴─ base
+ */
 const LOG = {
   commits: [
-    { sha: 'deadbeefdeadbeef', short: 'deadbee', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 3600_000).toISOString(), subject: 'wire the sidebar panel' },
-    { sha: 'cafebabecafebabe', short: 'cafebab', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 7200_000).toISOString(), subject: 'initial import' },
+    { sha: 'deadbeefdeadbeef', short: 'deadbee', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 3600_000).toISOString(), subject: 'wire the sidebar panel', parents: ['aaaaaaaaaaaaaaaa'], refs: ['HEAD -> main', 'origin/main'] },
+    { sha: 'aaaaaaaaaaaaaaaa', short: 'aaaaaaa', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 4000_000).toISOString(), subject: 'merge the sidebar work', parents: ['bbbbbbbbbbbbbbbb', 'cccccccccccccccc'], refs: [] },
+    { sha: 'bbbbbbbbbbbbbbbb', short: 'bbbbbbb', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 5000_000).toISOString(), subject: 'main line change', parents: ['dddddddddddddddd'], refs: [] },
+    { sha: 'cccccccccccccccc', short: 'ccccccc', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 6000_000).toISOString(), subject: 'side branch change', parents: ['dddddddddddddddd'], refs: ['dev'] },
+    { sha: 'dddddddddddddddd', short: 'ddddddd', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 7200_000).toISOString(), subject: 'initial import', parents: [], refs: [] },
   ],
 }
 
@@ -321,6 +330,24 @@ check('a path with a space survives rendering', text().includes('read me.md'), t
 check('line counts are shown', text().includes('+12') && text().includes('-3'), text().slice(0, 400))
 check('commit button is rendered disabled without a message', container.querySelector('.gmg-btn.is-primary') !== null)
 check('history subject is rendered', text().includes('wire the sidebar panel'), text().slice(0, 600))
+
+// ---- the history rail ----------------------------------------------------
+{
+  const rows = [...container.querySelectorAll('.gmg-commit-row')]
+  check('every commit got a row', rows.length === 5, rows.length)
+  check('the commit id is gone from the row', rows.every((row) => row.querySelector('.gmg-sha') === null), rows[0]?.innerHTML.slice(0, 160))
+  const svg = container.querySelector('.gmg-history .gmg-graph')
+  check('the rail is drawn as one svg for the list', svg !== null && svg.tagName.toLowerCase() === 'svg', container.querySelector('.gmg-history')?.innerHTML.slice(0, 160))
+  check('every commit is a node on the rail', svg?.querySelectorAll('.gmg-graph-dot').length === 5, svg?.querySelectorAll('.gmg-graph-dot').length)
+  const mergeEdge = [...(svg?.querySelectorAll('path') ?? [])].some((path) => (path.getAttribute('d') ?? '').includes('C'))
+  check('the merge draws a bent edge between lanes', mergeEdge === true, svg?.innerHTML.slice(0, 240))
+  const xs = [...(svg?.querySelectorAll('.gmg-graph-dot') ?? [])].map((dot) => Number(dot.getAttribute('cx')))
+  check('the two lanes are at different x', new Set(xs).size === 2, xs)
+  check('the rail reserves its width on the rows', /--gmg-graph-w:\s*40px/.test(container.querySelector('.gmg-history')?.getAttribute('style') ?? ''), container.querySelector('.gmg-history')?.getAttribute('style'))
+  check('the current branch is labelled on its commit', container.querySelector('.gmg-ref.is-head')?.textContent === 'main', container.querySelector('.gmg-ref.is-head')?.textContent)
+  check('the remote ref is labelled too', container.querySelector('.gmg-ref.is-remote')?.textContent === 'origin/main', container.querySelector('.gmg-ref.is-remote')?.textContent)
+  check('a local branch ref is labelled', [...container.querySelectorAll('.gmg-ref.is-branch')].some((ref) => ref.textContent === 'dev'), [...container.querySelectorAll('.gmg-ref')].map((ref) => ref.className))
+}
 check('github card names the remote', text().includes('acme/demo'), text().slice(0, 600))
 check('the github card lists the pulls tab', text().includes('拉取请求'), text().slice(-400))
 check('no error notice is shown', container.querySelector('.gmg-notice.is-error') === null, container.querySelector('.gmg-notice.is-error')?.textContent)

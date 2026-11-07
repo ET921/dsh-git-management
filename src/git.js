@@ -386,20 +386,40 @@ export function createGit(exec) {
   }
 
   /**
-   * Recent commits, newest first.
+   * Recent commits across every branch, newest first, with the two fields a
+   * graph needs.
+   *
+   * `--all` is what makes the rail show all of the repository's activity, not
+   * just the checked-out line: `--topo-order` keeps children above parents so
+   * lanes never have to bend backwards, `%P` gives the parents whose edges the
+   * rail draws, and `%D` gives the ref names it labels the nodes with.
+   *
    * @param cwd - repository directory.
    * @param limit - how many to read.
    */
   async function log(cwd, limit = 30) {
-    const result = await exec(cwd, ['log', `-n${Math.max(1, Math.min(200, limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1e'], { timeoutMs: 20000 })
+    const result = await exec(
+      cwd,
+      ['log', '--all', '--topo-order', `-n${Math.max(1, Math.min(200, limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%P%x1f%D%x1e'],
+      { timeoutMs: 20000 },
+    )
     if (result.code !== 0) return []
     return String(result.stdout)
       .split('\x1e')
       .map((chunk) => chunk.replace(/^\r?\n/, ''))
       .filter((chunk) => chunk.trim() !== '')
       .map((chunk) => {
-        const [sha, short, author, email, date, subject] = chunk.split('\x1f')
-        return { sha, short, author, email, date, subject }
+        const [sha, short, author, email, date, subject, parents, refs] = chunk.split('\x1f')
+        return {
+          sha,
+          short,
+          author,
+          email,
+          date,
+          subject,
+          parents: parents === undefined || parents === '' ? [] : parents.split(' ').filter((parent) => parent !== ''),
+          refs: refs === undefined || refs === '' ? [] : refs.split(', ').filter((ref) => ref !== ''),
+        }
       })
   }
 

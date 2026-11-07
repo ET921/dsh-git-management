@@ -142,7 +142,12 @@ function createGitStore() {
   }
 
   /**
-   * Re-read status and history.
+   * Re-read status, history and the branch list.
+   *
+   * The branch list rides along because the history rail needs it: a bare
+   * decoration like `dev` is only a local branch if this checkout has one by
+   * that name, and everything else is a remote.
+   *
    * @param only - internal epoch guard, used by `selectRepo`.
    */
   async function refresh(only) {
@@ -150,11 +155,15 @@ function createGitStore() {
     if (path === null) return
     const mine = only ?? epoch
     const snapshot = await task('refresh', async () => {
-      const [status, log] = await Promise.all([callHost('status', { path }), callHost('log', { path, limit: 20 })])
-      return { status, log: log?.commits ?? [] }
+      const [status, log, branches] = await Promise.all([
+        callHost('status', { path }),
+        callHost('log', { path, limit: 40 }),
+        callHost('branches', { path }).catch(() => null),
+      ])
+      return { status, log: log?.commits ?? [], branches }
     })
     if (snapshot === undefined || mine !== epoch) return
-    set({ status: snapshot.status, log: snapshot.log })
+    set({ status: snapshot.status, log: snapshot.log, branches: snapshot.branches })
   }
 
   /**

@@ -209,9 +209,47 @@ const PANEL_CSS = `
 .gmg-diff-line.is-hunk { color: var(--dsw-alias-brand-primary); opacity: .95; }
 .gmg-diff-line.is-meta { color: var(--dsw-alias-label-secondary); opacity: .8; }
 .gmg-diff-note { padding: 8px 12px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.gmg-history { display: flex; flex-direction: column; }
-.gmg-commit-row { display: flex; align-items: center; gap: 9px; padding: 7px 12px; }
+.gmg-history { display: flex; flex-direction: column; position: relative; }
+/* Rows are pinned to the rail's row height: the SVG is one drawing for the
+   whole list, and a lane only stays continuous if every row is the same tall. */
+.gmg-commit-row {
+  display: flex; align-items: center; gap: 8px;
+  height: 26px; padding: 0 12px;
+  padding-right: calc(var(--gmg-graph-w, 0px) + 12px);
+  box-sizing: border-box;
+}
 .gmg-commit-row:hover { background: var(--dsw-alias-bg-layer-2); }
+.gmg-graph { position: absolute; top: 0; right: 0; pointer-events: none; overflow: visible; }
+.gmg-graph-edge { fill: none; stroke-width: 1.6; stroke-linecap: round; opacity: .9; }
+.gmg-graph-dot { stroke-width: 1.6; }
+.gmg-ref {
+  flex: none; max-width: 108px;
+  display: inline-flex; align-items: center;
+  height: 16px; padding: 0 5px; border-radius: 5px;
+  font-family: var(--gmg-mono); font-size: 10.5px; line-height: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gmg-ref.is-head {
+  color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent);
+}
+.gmg-ref.is-branch {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+.gmg-ref.is-remote {
+  color: var(--dsw-alias-label-secondary);
+  background: color-mix(in srgb, var(--dsw-alias-label-secondary) 12%, transparent);
+}
+.gmg-ref.is-tag {
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);
+}
+.gmg-ref.is-detached {
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);
+}
+.gmg-ref-more { flex: none; font-size: 10px; color: var(--dsw-alias-label-secondary); }
 .gmg-sha {
   font-family: var(--gmg-mono); font-size: 11px;
   padding: 1px 6px; border-radius: 5px;
@@ -412,7 +450,8 @@ const PANEL_CSS = `
 .gmg-root.is-compact .gmg-diff pre { font-size: 11px; }
 .gmg-root.is-compact .gmg-gh-head { padding: 9px; gap: 8px; }
 .gmg-root.is-compact .gmg-gh-desc { padding: 0 9px 9px !important; }
-.gmg-root.is-compact .gmg-commit-row { padding: 6px 9px; gap: 7px; }
+.gmg-root.is-compact .gmg-commit-row { padding: 0 9px; padding-right: calc(var(--gmg-graph-w, 0px) + 9px); gap: 6px; }
+.gmg-root.is-compact .gmg-ref { max-width: 84px; font-size: 10px; }
 .gmg-root.is-compact .gmg-wt { padding: 5px 6px 5px 8px; gap: 5px; }
 .gmg-root.is-compact .gmg-wt-path { display: none; }
 .gmg-root.is-compact .gmg-meta { display: none; }

@@ -158,6 +158,25 @@ console.log('\n# git engine against a real repository')
     const log = await git.log(dir, 5)
     check('one commit in log', log.length === 1, log)
     check('log subject', log[0]?.subject === 'initial commit', log[0])
+    check('the root commit has no parents', Array.isArray(log[0]?.parents) && log[0].parents.length === 0, log[0]?.parents)
+    check('log decorates HEAD with its branch', (log[0]?.refs ?? []).some((ref) => ref.startsWith('HEAD -> ')), log[0]?.refs)
+
+    // The rail draws one lane per open line of history, which it can only do
+    // from the parent list; a merge is where that list stops being a single sha.
+    const baseSha = String((await exec(dir, ['rev-parse', 'HEAD'])).stdout).trim()
+    await exec(dir, ['switch', '-c', 'rail-side'])
+    await exec(dir, ['commit', '--allow-empty', '-m', 'side work'])
+    await exec(dir, ['switch', 'main'])
+    await exec(dir, ['commit', '--allow-empty', '-m', 'main work'])
+    await exec(dir, ['merge', '--no-ff', '--no-edit', 'rail-side'])
+    const merged = await git.log(dir, 10)
+    check('log reads every branch, not just the checked-out one', new Set(merged.flatMap((row) => row.refs)).size >= 2, merged.map((row) => row.refs))
+    const mergeRow = merged.find((row) => (row.parents ?? []).length === 2)
+    check('a merge carries two parents', mergeRow !== undefined, merged.map((row) => row.parents))
+    check('the merge is the newest commit', mergeRow?.sha === merged[0]?.sha, { merge: mergeRow?.sha, head: merged[0]?.sha })
+    // Put the fixture back the way the rest of the file expects it.
+    await exec(dir, ['reset', '--hard', baseSha])
+    await exec(dir, ['branch', '-D', 'rail-side'])
 
     const detail = await actions.handle('commitDetail', { path: dir, sha: 'HEAD' })
     check('commitDetail carries the subject', detail.subject === 'initial commit', detail)

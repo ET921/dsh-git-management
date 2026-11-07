@@ -207,7 +207,7 @@ function GitPanel(props) {
     body = h(
       'div',
       { className: 'gmg-card' },
-      h(BranchBar, { status: snapshot, t, busy }),
+      h(BranchBar, { status: snapshot, t, busy, branches: state.branches }),
       h(CommitBox, { status: snapshot, state, t, busy }),
       h(ChangeGroup, { title: t('staged'), rows: snapshot.staged, staged: true, t, empty: null }),
       h(ChangeGroup, { title: t('changes'), rows: snapshot.changes, staged: false, t, empty: t('noChanges') }),
@@ -218,42 +218,7 @@ function GitPanel(props) {
   }
 
   const history = isRepo
-    ? h(
-        'div',
-        { className: 'gmg-card' },
-        h(
-          'div',
-          { className: 'gmg-group-head' },
-          h(IconCommit, { size: 13 }),
-          t('history'),
-          h('span', { className: 'gmg-count' }, ` ${state.log.length}`),
-          h('span', { className: 'gmg-spacer' }),
-          h(
-            'button',
-            { className: 'gmg-btn is-ghost', type: 'button', onClick: () => setShowAllHistory((value) => !value) },
-            showAllHistory ? t('showLess') : t('showMore'),
-          ),
-        ),
-        h(
-          'div',
-          { className: 'gmg-history' },
-          state.log.length === 0
-            ? h('div', { className: 'gmg-empty' }, t('noCommits'))
-            : state.log.slice(0, showAllHistory ? state.log.length : 6).map((commit) =>
-                h(
-                  HoverTarget,
-                  { key: commit.sha, card: h(CommitHoverCard, { commit, t }) },
-                  h(
-                    'div',
-                    { className: 'gmg-commit-row' },
-                    h('span', { className: 'gmg-sha' }, commit.short),
-                    h('span', { className: 'gmg-subject' }, commit.subject),
-                    h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),
-                  ),
-                ),
-              ),
-        ),
-      )
+    ? h(HistoryCard, { log: state.log, branches: state.branches, t, lang, expanded: showAllHistory, onToggle: () => setShowAllHistory((value) => !value) })
     : null
 
   const github = isRepo ? h(GithubCard, { status: snapshot, state, t, busy }) : null
@@ -262,6 +227,95 @@ function GitPanel(props) {
     'div',
     { className: `gmg-root${compact ? ' is-compact' : ''}` },
     h('div', { className: 'gmg-page' }, header, ...notices, body, h(WorktreeSection, { state, t, busy, isRepo }), history, github),
+  )
+}
+
+/**
+ * How many commits the list shows before "show all".
+ * Ten is the point where a rail starts reading as a graph rather than a line,
+ * while still fitting in the column without scrolling the panel away.
+ */
+const HISTORY_PREVIEW = 10
+
+/**
+ * Read one commit's `%D` decoration.
+ *
+ * Git hands back the decoration as it prints it — `HEAD -> dev`, `origin/dev`,
+ * `tag: v1.0` — so the shape of the string is the kind, except that a plain
+ * name is only a local branch if this checkout actually has one by that name.
+ * Everything else is a remote.
+ *
+ * @param commit - one log row.
+ * @param branches - the `branches` action result, or null before it arrives.
+ * @returns `[{ name, kind }]`, `kind` being `head`, `branch`, `remote`, `tag` or `detached`.
+ */
+function historyRefs(commit, branches) {
+  const local = new Set((branches?.branches ?? []).map((row) => row.name))
+  return (commit.refs ?? []).map((decoration) => {
+    if (decoration.startsWith('HEAD -> ')) return { name: decoration.slice(8), kind: 'head' }
+    if (decoration === 'HEAD') return { name: 'HEAD', kind: 'detached' }
+    if (decoration.startsWith('tag: ')) return { name: decoration.slice(5), kind: 'tag' }
+    return { name: decoration, kind: local.has(decoration) ? 'branch' : 'remote' }
+  })
+}
+
+/**
+ * The history card: the commit list on the left, the lane rail down its right.
+ *
+ * The rail is one SVG for the whole list rather than one per row, because a lane
+ * has to join across row borders; the rows themselves only reserve the width the
+ * rail occupies, and every row is pinned to `GRAPH_ROW_HEIGHT` so the two line
+ * up. Refs ride on the row instead of the id: a reader needs to know "this is
+ * main" far more often than "this is 1268d25", and the id is in the hover card.
+ *
+ * @param props - `{ log, branches, t, lang, expanded, onToggle }`.
+ * @returns the card.
+ */
+function HistoryCard(props) {
+  const { log, branches, t, lang, expanded, onToggle } = props
+  const visible = useMemo(() => (expanded ? log : log.slice(0, HISTORY_PREVIEW)), [log, expanded])
+  const layout = useMemo(() => layoutHistory(visible), [visible])
+  const railWidth = useMemo(() => graphRailWidth(layout), [layout])
+
+  return h(
+    'div',
+    { className: 'gmg-card' },
+    h(
+      'div',
+      { className: 'gmg-group-head' },
+      h(IconCommit, { size: 13 }),
+      t('history'),
+      h('span', { className: 'gmg-count' }, ` ${log.length}`),
+      h('span', { className: 'gmg-spacer' }),
+      h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: onToggle }, expanded ? t('showLess') : t('showMore')),
+    ),
+    h(
+      'div',
+      { className: 'gmg-history', style: { '--gmg-graph-w': `${railWidth}px` } },
+      log.length === 0
+        ? h('div', { className: 'gmg-empty' }, t('noCommits'))
+        : [
+            h(HistoryGraph, { key: 'rail', rows: layout }),
+            layout.map((row) => {
+              const commit = row.commit
+              const refs = historyRefs(commit, branches)
+              const shown = refs.slice(0, 2)
+              const extra = refs.length - shown.length
+              return h(
+                HoverTarget,
+                { key: commit.sha, card: h(CommitHoverCard, { commit, t }) },
+                h(
+                  'div',
+                  { className: 'gmg-commit-row' },
+                  shown.map((ref) => h('span', { key: ref.kind + ref.name, className: `gmg-ref is-${ref.kind}`, title: ref.name }, ref.name)),
+                  extra > 0 ? h('span', { className: 'gmg-ref-more', title: refs.map((ref) => ref.name).join(', ') }, `+${extra}`) : null,
+                  h('span', { className: 'gmg-subject', title: commit.subject }, commit.subject),
+                  h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),
+                ),
+              )
+            }),
+          ],
+    ),
   )
 }
 
@@ -641,8 +695,7 @@ function BranchMenu(props) {
  * @returns the branch bar element.
  */
 function BranchBar(props) {
-  const { status, t, busy } = props
-  const branches = useBranches(status, t)
+  const { status, t, busy, branches } = props
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState('')
 
@@ -734,29 +787,6 @@ function BranchBar(props) {
         )
       : null,
   )
-}
-
-/**
- * Read the branch list lazily and keep it fresh when HEAD moves.
- * @param status - the current status snapshot.
- * @param t - translator (unused, kept for symmetry).
- * @returns `{ branches }` or null before the first read.
- */
-function useBranches(status, t) {
-  const [list, setList] = useState(null)
-  const head = `${status.branch ?? ''}:${status.oid ?? ''}`
-  useEffect(() => {
-    let live = true
-    callHost('branches', { path: status.path })
-      .then((value) => {
-        if (live) setList(value)
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [status.path, head])
-  return list
 }
 
 /**
