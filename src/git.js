@@ -213,16 +213,24 @@ export function createGit(exec) {
 
   /**
    * Map one porcelain `XY` pair to the glyph the panel draws.
+   *
+   * One entry can be on both sides at once — `AD` is a file added to the index
+   * and then deleted from the worktree — so the letter depends on which list it
+   * is being drawn in. Reading the index letter in the worktree list claimed an
+   * `AD` file was an addition even though it is already gone from disk.
+   *
    * @param entry - one parsed status entry.
-   * @returns `{ status, staged }` where status is one of M/A/D/R/C/U/T.
+   * @param side - `staged` for the index list, `worktree` for the changes list.
+   * @returns `{ status }` where status is one of M/A/D/R/C/U/T.
    */
-  function describe(entry) {
+  function describe(entry, side = 'staged') {
     if (entry.kind === 'untracked') return { status: 'U' }
     if (entry.kind === 'conflict') return { status: 'U' }
     const x = entry.xy?.[0] ?? '.'
     const y = entry.xy?.[1] ?? '.'
     const stagedSide = x !== '.' && x !== ' '
-    const code = stagedSide ? x : y
+    const worktreeSide = y !== '.' && y !== ' '
+    const code = side === 'worktree' && worktreeSide ? y : stagedSide ? x : y
     return { status: code === '?' ? 'U' : code }
   }
 
@@ -255,13 +263,14 @@ export function createGit(exec) {
     const changes = []
     const conflicts = []
     for (const entry of parsed.entries) {
-      const { status: letter } = describe(entry)
+      const stagedLetter = describe(entry, 'staged').status
+      const worktreeLetter = describe(entry, 'worktree').status
       const x = entry.xy?.[0] ?? '.'
       const y = entry.xy?.[1] ?? '.'
       const row = {
         path: entry.path,
         origPath: entry.origPath ?? null,
-        status: letter,
+        status: stagedLetter,
         kind: entry.kind,
         index: x,
         worktree: y,
@@ -276,7 +285,7 @@ export function createGit(exec) {
       }
       if (entry.kind === 'untracked' || (y !== '.' && y !== ' ')) {
         const counts = entry.kind === 'untracked' ? { additions: 0, deletions: 0 } : working.get(entry.path) ?? { additions: 0, deletions: 0 }
-        changes.push({ ...row, ...counts })
+        changes.push({ ...row, status: worktreeLetter, ...counts })
       }
     }
     return {

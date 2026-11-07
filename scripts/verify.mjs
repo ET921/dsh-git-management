@@ -237,6 +237,17 @@ console.log('\n# git engine against a real repository')
     check('removeUntracked deletes only the named file', existsSync(join(dir, 'b[br]acket.txt')) === false && existsSync(join(dir, 'bracket.txt')) === true)
     await rm(join(dir, 'bracket.txt'), { force: true })
 
+    // One path can be on both sides at once: staged as an addition, then
+    // deleted from the disk. Each list needs its own letter, or the "changes"
+    // list claims a file that is gone is an addition.
+    await writeFile(join(dir, 'both-sides.txt'), 'temporary\n')
+    await git.stage(dir, ['both-sides.txt'])
+    await rm(join(dir, 'both-sides.txt'), { force: true })
+    const bothSides = await git.status(dir)
+    check('an added-then-deleted file is an addition on the staged side', bothSides.staged.some((row) => row.path === 'both-sides.txt' && row.status === 'A'), bothSides.staged.map((row) => `${row.path}:${row.status}`))
+    check('and a deletion on the worktree side', bothSides.changes.some((row) => row.path === 'both-sides.txt' && row.status === 'D'), bothSides.changes.map((row) => `${row.path}:${row.status}`))
+    await git.unstage(dir, ['both-sides.txt'])
+
     await git.stage(dir, ['README.md'])
     const stagedPatch = await git.stagedPatch(dir)
     check('staged patch mentions the added line', stagedPatch.includes('+more'))
