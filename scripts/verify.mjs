@@ -12,7 +12,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile, readFile, chmod } from 'node:fs/promises'
 import { closeSync, existsSync, openSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -167,6 +167,12 @@ console.log('\n# git engine against a real repository')
     await exec(dir, ['switch', '-c', 'rail-side'])
     await exec(dir, ['commit', '--allow-empty', '-m', 'side work'])
     await exec(dir, ['switch', 'main'])
+    // The default scope follows the checked-out line, which is the only window
+    // a lane layout can draw without tips that begin in mid-air.
+    const headScoped = await git.log(dir, 10)
+    check('the default log follows the checked-out line', headScoped.every((row) => row.subject !== 'side work'), headScoped.map((row) => row.subject))
+    const allScoped = await git.log(dir, 10, 'all')
+    check('scope "all" reads the other branch', allScoped.some((row) => row.subject === 'side work'), allScoped.map((row) => row.subject))
     await exec(dir, ['commit', '--allow-empty', '-m', 'main work'])
     await exec(dir, ['merge', '--no-ff', '--no-edit', 'rail-side'])
     const merged = await git.log(dir, 10)
@@ -174,6 +180,14 @@ console.log('\n# git engine against a real repository')
     const mergeRow = merged.find((row) => (row.parents ?? []).length === 2)
     check('a merge carries two parents', mergeRow !== undefined, merged.map((row) => row.parents))
     check('the merge is the newest commit', mergeRow?.sha === merged[0]?.sha, { merge: mergeRow?.sha, head: merged[0]?.sha })
+
+    // A stash is reachable only through `refs/stash`, so the "all" view has to
+    // exclude it explicitly; left in, its two parents open two orphan lanes.
+    await writeFile(join(dir, 'README.md'), '# fixture\n\nstashed change\n')
+    await exec(dir, ['stash', 'push', '-m', 'rail stash probe'])
+    const withStash = await git.log(dir, 15, 'all')
+    check('the "all" view leaves the stash out', withStash.every((row) => !row.subject.includes('rail stash probe')), withStash.map((row) => row.subject))
+    await exec(dir, ['stash', 'drop'])
     // Put the fixture back the way the rest of the file expects it.
     await exec(dir, ['reset', '--hard', baseSha])
     await exec(dir, ['branch', '-D', 'rail-side'])
@@ -482,7 +496,14 @@ console.log('\n# commit diff (one history row → one tab)')
 
     // A chmod-only commit: the patch carries no hunk, and the tab says what
     // changed rather than "no textual difference".
+    //
+    // `update-index --chmod` writes the mode to the index only. On a filesystem
+    // that records the executable bit (`core.fileMode=true`, i.e. macOS and
+    // Linux) the worktree file stays 644, so the file is left dirty and the next
+    // `git add -A` in this script sweeps it into an unrelated commit. Windows
+    // hides that because it does not track the bit at all.
     await exec(dir, ['update-index', '--chmod=+x', 'long.txt'])
+    await chmod(join(dir, 'long.txt'), 0o755)
     await exec(dir, ['commit', '-m', 'make long.txt executable'])
     const modeSha = await revParse()
     const mode = await actions.handle('commitDiff', { path: dir, sha: modeSha })
