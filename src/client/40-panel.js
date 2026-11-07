@@ -238,7 +238,17 @@ function GitPanel(props) {
   }
 
   const history = isRepo
-    ? h(HistoryCard, { path: state.path, log: state.log, branches: state.branches, t, lang, expanded: showAllHistory, onToggle: () => setShowAllHistory((value) => !value) })
+    ? h(HistoryCard, {
+        path: state.path,
+        log: state.log,
+        branches: state.branches,
+        t,
+        lang,
+        expanded: showAllHistory,
+        onToggle: () => setShowAllHistory((value) => !value),
+        scope: state.logScope,
+        onToggleScope: (next) => gitStore.setLogScope(next),
+      })
     : null
 
   const github = isRepo ? h(GithubCard, { status: snapshot, state, t, busy }) : null
@@ -326,11 +336,12 @@ function refScope(kind, t) {
  * change set as its own tab in the same column, the way Cursor's history does.
  * Clicking a second commit opens a second tab; the list itself never moves.
  *
- * @param props - `{ path, log, branches, t, lang, expanded, onToggle }`.
+ * @param props - `{ path, log, branches, t, lang, expanded, onToggle, scope, onToggleScope }`.
  * @returns the card.
  */
 function HistoryCard(props) {
-  const { path, log, branches, t, lang, expanded, onToggle } = props
+  const { path, log, branches, t, lang, expanded, onToggle, scope, onToggleScope } = props
+  const showingAll = scope === 'all'
   const visible = useMemo(() => (expanded ? log : log.slice(0, HISTORY_PREVIEW)), [log, expanded])
   const layout = useMemo(() => layoutHistory(visible), [visible])
   const railWidth = useMemo(() => graphRailWidth(layout), [layout])
@@ -350,6 +361,17 @@ function HistoryCard(props) {
       t('history'),
       h('span', { className: 'gmg-count' }, ` ${log.length}`),
       h('span', { className: 'gmg-spacer' }),
+      h(
+        'button',
+        {
+          className: `gmg-btn is-ghost gmg-scope${showingAll ? ' is-all' : ''}`,
+          type: 'button',
+          title: showingAll ? t('scopeHeadHint') : t('scopeAllHint'),
+          'aria-pressed': showingAll,
+          onClick: () => onToggleScope?.(showingAll ? 'head' : 'all'),
+        },
+        showingAll ? t('scopeAll') : t('scopeHead'),
+      ),
       h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: onToggle }, expanded ? t('showLess') : t('showMore')),
     ),
     h(

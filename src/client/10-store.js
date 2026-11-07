@@ -26,6 +26,13 @@ function initialState() {
     status: null,
     /** Recent commits, newest first. */
     log: [],
+    /**
+     * Which history the rail draws: `head` follows the checked-out line (the
+     * shape Cursor's graph has), `all` reads every ref. Kept in the store, not
+     * in the component, so switching the main column away and back does not
+     * silently drop the reader's choice and refetch the other history.
+     */
+    logScope: 'head',
     /** `{ current, branches }` from `git for-each-ref`. */
     branches: null,
     /** Every checkout of the repository; see the `worktrees` action. */
@@ -178,7 +185,7 @@ function createGitStore() {
       async () => {
         const [status, log, branches] = await Promise.all([
           callHost('status', { path }),
-          callHost('log', { path, limit: 40 }),
+          callHost('log', { path, limit: 40, scope: state.logScope }),
           callHost('branches', { path }).catch(() => null),
         ])
         return { status, log: log?.commits ?? [], branches }
@@ -187,6 +194,22 @@ function createGitStore() {
     )
     if (snapshot === undefined || mine !== epoch) return
     set({ status: snapshot.status, log: snapshot.log, branches: snapshot.branches })
+  }
+
+  /**
+   * Switch the history rail between the checked-out line and every ref.
+   *
+   * The commits are re-read rather than filtered in the browser: a window of
+   * `--all` rows is a different set of commits, not a subset, so re-labelling
+   * the rows already on screen would draw a graph of history that is not there.
+   *
+   * @param scope - `'head'` or `'all'`.
+   */
+  async function setLogScope(scope) {
+    const next = scope === 'all' ? 'all' : 'head'
+    if (state.logScope === next) return
+    set({ logScope: next })
+    await refresh()
   }
 
   /**
@@ -471,6 +494,7 @@ function createGitStore() {
     loadRepos,
     selectRepo,
     refresh,
+    setLogScope,
     refreshStatus,
     refreshAll,
     loadWorktrees,

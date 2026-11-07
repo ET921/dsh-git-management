@@ -309,7 +309,7 @@ export function createActions({ git, workspaces }) {
           stageAll: Boolean(params.stageAll),
         })
       case 'log':
-        return { commits: await git.log(path, Number(params.limit ?? 30)) }
+        return { commits: await git.log(path, Number(params.limit ?? 30), params.scope === 'all' ? 'all' : 'head') }
       case 'commitDetail':
         return git.commitDetail(path, String(params.sha ?? 'HEAD'))
       case 'commitDiff':

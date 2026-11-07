@@ -65,13 +65,24 @@ function layoutHistory(commits) {
   const rows = []
 
   /**
-   * A free lane, never the one the caller is using.
-   * @param skip - a lane index to leave alone.
+   * The leftmost lane to the right of `lane` that is free, extending the rail
+   * when there is none. A new branch never opens to the left of the line it
+   * forked from: that would draw the branch as older than the line it starts at.
+   * @param lane - the lane the commit is on.
    * @returns the index.
    */
-  const freeLane = (skip) => {
+  const freeLaneRight = (lane) => {
+    for (let index = lane + 1; index < lanes.length; index += 1) {
+      if (lanes[index] === null) return index
+    }
+    lanes.push(null)
+    return lanes.length - 1
+  }
+
+  /** The leftmost free lane anywhere, used for a commit no lane was waiting for. */
+  const freeLane = () => {
     for (let index = 0; index < lanes.length; index += 1) {
-      if (lanes[index] === null && index !== skip) return index
+      if (lanes[index] === null) return index
     }
     lanes.push(null)
     return lanes.length - 1
@@ -79,33 +90,54 @@ function layoutHistory(commits) {
 
   for (const commit of commits) {
     const parents = Array.isArray(commit.parents) ? commit.parents.filter((parent) => typeof parent === 'string' && parent !== '') : []
-    let lane = lanes.indexOf(commit.sha)
-    const incoming = lane !== -1
-    if (incoming === false) lane = freeLane(-1)
-    // Mark the lane as this commit's while its parents are placed, so a merge
-    // cannot hand its second parent the lane the first one just took.
+
+    // Every lane waiting for this commit, leftmost first. A merge makes two
+    // lanes wait for the same commit; the commit is drawn once, on the leftmost,
+    // and the others join it from above (see `joins`).
+    const waiting = []
+    for (let index = 0; index < lanes.length; index += 1) {
+      if (lanes[index] === commit.sha) waiting.push(index)
+    }
+    const incoming = waiting.length > 0
+    const lane = incoming ? waiting[0] : freeLane()
+    const joins = waiting.slice(1)
+
     lanes[lane] = commit.sha
     const before = lanes.slice()
+    // The duplicates are consumed by this row: their lines meet this commit.
+    for (const other of joins) lanes[other] = null
+
     const parentLanes = []
     parents.forEach((parent, index) => {
       const existing = lanes.indexOf(parent)
-      if (existing !== -1) {
-        parentLanes.push(existing)
-        if (index === 0) lanes[lane] = null
-        return
-      }
       if (index === 0) {
+        // The first parent keeps this line only when no line to its LEFT is
+        // already headed for it. If one is, the main line is the left one and
+        // this lane closes into it — otherwise the two lines would swap places
+        // and every merge would look like the history changed column.
+        if (existing !== -1 && existing < lane) {
+          lanes[lane] = null
+          parentLanes.push(existing)
+          return
+        }
         lanes[lane] = parent
         parentLanes.push(lane)
+        // A lane to the right that already heads for the same parent is left
+        // alone: the two lines meet when that parent is drawn.
         return
       }
-      const fresh = freeLane(lane)
+      if (existing !== -1) {
+        parentLanes.push(existing)
+        return
+      }
+      const fresh = freeLaneRight(lane)
       lanes[fresh] = parent
       parentLanes.push(fresh)
     })
+
     if (parents.length === 0) lanes[lane] = null
     while (lanes.length > 0 && lanes[lanes.length - 1] === null) lanes.pop()
-    rows.push({ commit, lane, incoming, before, after: lanes.slice(), parentLanes })
+    rows.push({ commit, lane, incoming, joins, before, after: lanes.slice(), parentLanes })
   }
   return rows
 }
@@ -150,11 +182,23 @@ function HistoryGraph(props) {
     const cy = top + GRAPH_ROW_HEIGHT / 2
     const bottom = top + GRAPH_ROW_HEIGHT
     const lanesHere = Math.max(row.before.length, row.after.length)
+    const joins = row.joins ?? []
     // Lanes that are only passing through this row keep their line straight.
     for (let lane = 0; lane < lanesHere; lane += 1) {
       if (lane === row.lane) continue
       const fromAbove = (row.before[lane] ?? null) !== null
       const toBelow = (row.after[lane] ?? null) !== null
+      if (joins.includes(lane)) {
+        // Another line was waiting for this same commit. It meets the dot from
+        // above instead of ending in mid-air, which is what makes a merge read
+        // as "these two lines became one" rather than as a lost branch.
+        const bend = GRAPH_ROW_HEIGHT * 0.2
+        edges.push({
+          lane,
+          d: `M ${x(lane)} ${top} C ${x(lane)} ${top + bend}, ${x(row.lane)} ${cy - bend}, ${x(row.lane)} ${cy}`,
+        })
+        continue
+      }
       if (fromAbove && toBelow) edges.push({ lane, d: `M ${x(lane)} ${top} L ${x(lane)} ${bottom}` })
       else if (fromAbove) edges.push({ lane, d: `M ${x(lane)} ${top} L ${x(lane)} ${cy}` })
     }
