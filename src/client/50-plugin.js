@@ -69,6 +69,8 @@ const zh = {
   changesCount: '项未暂存',
   commit: '提交',
   commitHint: '提交已暂存的更改',
+  commitNeedsMessage: '先写提交信息',
+  commitNeedsStaged: '先暂存至少一个文件',
   unstageAll: '全部取消暂存',
   stageAllFiles: '全部暂存',
   unstage: '取消暂存',
