@@ -5,11 +5,11 @@
 **Manage Git right from the DSH sidebar**: stage, commit, branch, sync, browse history and open pull requests without leaving the chat.
 
 > Written for **vibe coders**: you don't need to memorise git commands — follow the recipes below and click.
-> Want to see it first? Scroll to the screenshots (the slots are reserved; images are coming).
+> Want to see it first? Scroll down; there are real screenshots below.
 
-![Panel overview (screenshot pending)](docs/images/00-overview.png)
+![Panel overview](docs/images/00-overview.png)
 
-> 📸 **Screenshot slot 00**: the whole right-hand Git column. See [Screenshot checklist](#screenshot-checklist) at the bottom.
+> The whole right-hand Git column: branch bar, commit box, change list, history, GitHub.
 
 ---
 
@@ -40,9 +40,9 @@ flowchart LR
 2. In the right sidebar, go to **Start** and find the third card, **源代码管理**.
 3. Click it: a Git tab appears and the current workspace's repository is selected for you.
 
-![Start page and card (screenshot pending)](docs/images/01-start.png)
+![Start page and card](docs/images/01-start.png)
 
-> 📸 **Screenshot slot 01**: the Start page, with the third card fully in frame.
+> Right column → Start: the third card is Source Control.
 
 Don't see the panel? Jump to [Troubleshooting](#troubleshooting).
 
@@ -80,19 +80,11 @@ flowchart TB
 - **Stage all** takes everything at once; tick **Amend last commit** to amend (the message is pre-filled).
 - While conflicts are unresolved the commit button is disabled and says why.
 
-![Change list (screenshot pending)](docs/images/02-changes.png)
-
-> 📸 **Screenshot slot 02**: the change list with one row hovered so the actions show.
-
 ### See a file's diff
 
 - Click a file → a **File diff** tab opens: both gutters, unified/split, previous/next file, `Esc` to close.
 - The tab header has **Stage** and **Discard**, so reviewing doesn't send you back to the list.
 - Conflicted files say "unresolved conflicts" instead of drawing wrong line numbers.
-
-![File diff (screenshot pending)](docs/images/03-file-diff.png)
-
-> 📸 **Screenshot slot 03**: the file diff tab in split mode.
 
 ### See what one commit changed
 
@@ -115,9 +107,9 @@ sequenceDiagram
   P-->>U: New tab, files stacked
 ```
 
-![Commit diff (screenshot pending)](docs/images/04-commit-diff.png)
+![Commit diff](docs/images/04-commit-diff.png)
 
-> 📸 **Screenshot slot 04**: the commit diff tab, ideally a commit touching 2–4 files.
+> A commit tab opened from a history row: one block per file, changed hunks only.
 
 ### History and branch lanes
 
@@ -126,28 +118,20 @@ sequenceDiagram
 - Hover a commit for sha, author, time, message and `N files +X −Y`.
 - Ten commits by default, expandable to forty.
 
-![History and lanes (screenshot pending)](docs/images/05-history.png)
+![Commit hover card](docs/images/05-hover.png)
 
-> 📸 **Screenshot slot 05**: the history card, ideally a repo with a merge.
+> Hovering a history row: sha, author, time, message and the stat line.
 
 ### Worktrees (parallel Agent work)
 
 - Lists every checkout of the repo, including the ones DSH creates under `.agents/worktrees/*`.
 - Each row shows branch, path, dirty count and a `主` (main) marker; switch the panel to it, open it as a DSH workspace, remove it, or prune.
 
-![Worktrees (screenshot pending)](docs/images/06-worktree.png)
-
-> 📸 **Screenshot slot 06**: the worktree section with the main checkout plus at least one worktree.
-
 ### GitHub
 
 - Detects the origin (ssh/https, GitHub Enterprise included).
 - Stars / forks / open issues, pull request list, issue list, and a one-click "new PR" from the current branch.
 - The token lives in this browser only; pushing uses your machine's own git credentials.
-
-![GitHub card (screenshot pending)](docs/images/07-github.png)
-
-> 📸 **Screenshot slot 07**: the GitHub card, after connecting a token.
 
 ### Small extras
 
@@ -203,19 +187,15 @@ flowchart LR
 
 ## Screenshot checklist
 
-Save the images under `docs/images/` with the names below — the README already points at them, **no code changes needed**.
-Suggested: dark theme, 800–1200px wide, PNG. Blur tokens and private repository names before uploading.
+Four real screenshots are included. To replace one, overwrite the file with the same name under `docs/images/` — **no code changes needed**.
+Suggested: dark theme, PNG; blur tokens and private repository names before uploading.
 
-| File | Where to capture | What must be in frame | Tip |
-| --- | --- | --- | --- |
-| `00-overview.png` | The whole right column with the Git tab open | Branch bar, commit box, change list, history | 360–420px wide |
-| `01-start.png` | Right column → Start page | The third card "源代码管理" with the two cards above/below | Keep the card fully in frame |
-| `02-changes.png` | Change list, one row hovered | Group headers, `+N −N`, hover actions | At least three changes (edit + new file) |
-| `03-file-diff.png` | File diff tab in split mode | Both gutters, red/green, header buttons | Pick a file with real additions/removals |
-| `04-commit-diff.png` | Commit diff tab | 2–4 file blocks, headers, hunks | A rename or binary makes it richer |
-| `05-history.png` | History card | Commit rows, ref badges, lane rail | A repo with a merge looks best |
-| `06-worktree.png` | Worktree section | Main worktree plus at least one more, `主` marker | Create a demo worktree first |
-| `07-github.png` | GitHub card | Repo name, stars, PR / issue lists | Connect the token first |
+| File | What it shows |
+| --- | --- |
+| `00-overview.png` | The whole right-hand Git column (branch bar, commit box, change list, history, GitHub) |
+| `01-start.png` | The Start page and the Source Control card |
+| `04-commit-diff.png` | The commit diff tab (files stacked vertically) |
+| `05-hover.png` | The commit hover card (sha, author, time, message, stats) |
 
 ---
 
