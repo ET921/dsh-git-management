@@ -22,6 +22,18 @@ const DIFF_TAB_ID = 'dsh-git-diff'
 /** The diff tab's kind, as `sidebarRight.openTab` names it. */
 const DIFF_TAB_KIND = 'git-diff'
 
+/**
+ * The third tab type: one commit's whole change set.
+ *
+ * Registered `multiple: true`, which is what makes every history click its own
+ * tab — the same independent-instance rule the terminal tabs use. Without it
+ * the column would reuse one tab and a second commit would replace the first.
+ */
+const COMMIT_TAB_ID = 'dsh-git-commit'
+
+/** The commit tab's kind, as `sidebarRight.openTab` names it. */
+const COMMIT_TAB_KIND = 'git-commit'
+
 /** Chinese copy (the GUI's default language on this machine). */
 const zh = {
   panelTitle: '源代码管理',
@@ -139,6 +151,19 @@ const zh = {
   diffWorktreeBadge: '未暫存',
   diffNothingOpen: '從右側的變更清單點一個檔案。',
   diffTabTitle: '檔案差異',
+  commitDiffTabTitle: '提交差異',
+  openCommitDiffHint: '開啟這次提交的變更',
+  commitDiffLoading: '正在讀取這次提交的變更…',
+  commitDiffEmpty: '這次提交沒有檔案變更。',
+  commitDiffBinaryBadge: '二進位',
+  commitDiffBinary: '二進位檔，不顯示差異。',
+  commitDiffNoText: '沒有文字差異。',
+  commitDiffFileCount: '{files} 個檔案',
+  commitDiffMergeBadge: '合併',
+  commitDiffExpandAll: '展開全部',
+  commitDiffCollapseAll: '收合全部',
+  commitDiffTruncated: '共 {total} 個檔案，這裡只載入前 {shown} 個的差異。',
+  commitDiffRetry: '重試',
   hoverLoading: '讀取中…',
   hoverStatFiles: '{files} 個檔案變更',
   hoverStatAdditions: '{additions} 行插入(+)',
@@ -271,6 +296,19 @@ const en = {
   diffWorktreeBadge: 'working tree',
   diffNothingOpen: 'Pick a file in the change list on the right.',
   diffTabTitle: 'File diff',
+  commitDiffTabTitle: 'Commit diff',
+  openCommitDiffHint: 'Open this commit’s changes',
+  commitDiffLoading: 'Reading this commit’s changes…',
+  commitDiffEmpty: 'This commit changed no files.',
+  commitDiffBinaryBadge: 'binary',
+  commitDiffBinary: 'Binary file; no textual diff.',
+  commitDiffNoText: 'No textual difference.',
+  commitDiffFileCount: '{files} files',
+  commitDiffMergeBadge: 'merge',
+  commitDiffExpandAll: 'Expand all',
+  commitDiffCollapseAll: 'Collapse all',
+  commitDiffTruncated: '{total} files in all; the diffs for the first {shown} are shown here.',
+  commitDiffRetry: 'Retry',
   hoverLoading: 'Reading…',
   hoverStatFiles: '{files} files changed',
   hoverStatAdditions: '{additions} insertions(+)',
@@ -352,7 +390,59 @@ function DiffTabTitle(props) {
     params?.staged === true ? h('span', { className: 'gmg-gh-label' }, t('diffStagedBadge')) : null,
   )
 }
+/**
+ * The commit tab's body, inside the crash boundary.
+ * @param props - slot props.
+ * @returns the boundary element.
+ */
+function CommitTabBody(props) {
+  return h(PanelBoundary, { ...props, compact: true, seat: 'commit' })
+}
 
+/**
+ * The commit seat: reads the tab's own parameters and keeps its cached view
+ * pointed at them.
+ *
+ * Each commit tab is an independent occurrence (`multiple: true`), so this hook
+ * is what gives every tab its own commit: the params arrive per tab, the cache
+ * is keyed by them, and a re-navigation of the same tab only bumps `revision`.
+ *
+ * @param props - slot props plus `useTabInfo`, `actions` and `t`.
+ * @returns the commit panel.
+ */
+function CommitPanelSeat(props) {
+  const useInfo = typeof props.useTabInfo === 'function' ? props.useTabInfo : () => ({ tab: null })
+  const info = useInfo()
+  const navigation = info?.tab?.navigation ?? null
+  const params = navigation?.params ?? null
+  const revision = navigation?.revision ?? 0
+  const path = typeof params?.path === 'string' ? params.path : null
+  const sha = typeof params?.sha === 'string' ? params.sha : null
+  const key = path === null || sha === null ? null : commitViewKey(path, sha)
+  const view = useCommitView(key)
+
+  useEffect(() => {
+    if (path !== null && sha !== null) loadCommitDiff({ path, sha })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the revision is the
+    // signal that the opener asked for this commit, even when it is the same one.
+  }, [revision, key])
+
+  // A cache that dropped this entry (it was the oldest) is re-read rather than
+  // leaving an empty tab behind.
+  useEffect(() => {
+    if (path !== null && sha !== null && view === null) loadCommitDiff({ path, sha })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, view === null])
+
+  const close = () => {
+    if (typeof props.actions?.close === 'function') props.actions.close()
+  }
+  const retry = () => {
+    if (path !== null && sha !== null) loadCommitDiff({ path, sha })
+  }
+
+  return h(CommitDiffPanel, { ...props, params, view, onClose: close, onRetry: retry })
+}
 
 /**
  * The tab body wrapped in the crash boundary, told it lives in a narrow column.
@@ -411,7 +501,7 @@ class PanelBoundary extends react.Component {
         ),
       )
     }
-    const Comp = this.props.seat === 'diff' ? DiffPanelSeat : GitPanel
+    const Comp = this.props.seat === 'diff' ? DiffPanelSeat : this.props.seat === 'commit' ? CommitPanelSeat : GitPanel
     return h(Comp, this.props)
   }
 }
@@ -492,8 +582,8 @@ exports.apply = function apply(ctx) {
 
       // The second type: one file's diff as its own tab. No guide entry — this
       // tab is only ever reached from a row in the list, never from the start
-      // page, and `multiple: false` makes a second click re-navigate the same
-      // tab instead of piling up one tab per file.
+      // page. It is not `multiple`, so the column dedupes it: a second click
+      // re-navigates the same tab instead of piling up one tab per file.
       scoped.effect(
         () =>
           scoped.sidebarRightTabs.register({
@@ -530,7 +620,48 @@ exports.apply = function apply(ctx) {
         ),
       )
 
-      console.log('[dsh-git-management] tabs registered (source control + file diff)')
+      // The third type: one commit's whole change set. `multiple: true` is the
+      // point — every history click is its own tab, so two commits can be read
+      // side by side. The column gives each open its own occurrence id, which
+      // is also why the body reads the commit from its own navigation params.
+      scoped.effect(
+        () =>
+          scoped.sidebarRightTabs.register({
+            id: COMMIT_TAB_ID,
+            kind: COMMIT_TAB_KIND,
+            priority: 'extension',
+            multiple: true,
+            title: () => t('commitDiffTabTitle'),
+            guide: [],
+          }),
+        'dsh-git-management: commit diff tab type',
+      )
+
+      scoped.slots.inject('sidebar.right.pane.tab', () =>
+        scoped.slots.register(
+          {
+            name: 'sidebar.right.pane.tab',
+            key: COMMIT_TAB_ID,
+            locale: NS,
+            inject: () => ({ t, lang: scoped.locale.getLocale().active }),
+          },
+          CommitTabBody,
+        ),
+      )
+
+      scoped.slots.inject('sidebar.right.pane.tab.title', () =>
+        scoped.slots.register(
+          {
+            name: 'sidebar.right.pane.tab.title',
+            key: COMMIT_TAB_ID,
+            locale: NS,
+            inject: () => ({ t }),
+          },
+          CommitTabTitle,
+        ),
+      )
+
+      console.log('[dsh-git-management] tabs registered (source control + file diff + commit diff)')
     } catch (error) {
       console.error('[dsh-git-management] mount failed:', error)
     }
@@ -545,6 +676,13 @@ exports.apply = function apply(ctx) {
           scoped.sidebarRight.openTab(DIFF_TAB_KIND, { params })
         } catch (error) {
           console.error('[dsh-git-management] could not open the diff tab:', error)
+        }
+      },
+      openCommit: (params) => {
+        try {
+          scoped.sidebarRight.openTab(COMMIT_TAB_KIND, { params })
+        } catch (error) {
+          console.error('[dsh-git-management] could not open the commit tab:', error)
         }
       },
     }

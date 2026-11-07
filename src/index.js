@@ -327,6 +327,6 @@ export function apply(ctx) {
 
     // One line at mount, so the log says which build the process actually
     // loaded — a page reload replaces the browser half but not this one.
-    console.log('[dsh-git-management] host ready: /dsh-git/api (status, diff, commit, worktrees, github)')
+    console.log('[dsh-git-management] host ready: /dsh-git/api (status, diff, commit, commit diff, worktrees, github)')
   })
 }

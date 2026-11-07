@@ -406,6 +406,106 @@ console.log('\n# git engine against a real repository')
   }
 }
 
+console.log('\n# commit diff (one history row → one tab)')
+{
+  // A repository written for this section only: the shape a history row needs
+  // (root commit, a one-line edit, a rename, a deletion, a binary and a merge)
+  // is easier to state here than to tease out of the shared fixture.
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-git-commitdiff-'))
+  const revParse = async () => String((await exec(dir, ['rev-parse', 'HEAD'])).stdout).trim()
+  try {
+    await exec(dir, ['init', '-b', 'main'])
+    await exec(dir, ['config', 'user.email', 'dev@example.com'])
+    await exec(dir, ['config', 'user.name', 'Dev'])
+    await exec(dir, ['config', 'commit.gpgsign', 'false'])
+
+    await writeFile(join(dir, 'README.md'), '# fixture\nfirst line\nsecond line\n')
+    await writeFile(join(dir, 'name with space.txt'), 'spaces are fine\n')
+    await writeFile(join(dir, 'b[br]acket.txt'), 'weird name\n')
+    await writeFile(join(dir, 'bin.dat'), Buffer.from([0, 1, 2, 3]))
+    await exec(dir, ['add', '-A'])
+    await exec(dir, ['commit', '-m', 'root commit'])
+    const rootSha = await revParse()
+
+    const root = await actions.handle('commitDiff', { path: dir, sha: rootSha })
+    check('commitDiff resolves the commit', root.sha === rootSha, root.sha)
+    check('commitDiff carries the subject', root.subject === 'root commit', root.subject)
+    check('a root commit has no parents', Array.isArray(root.parents) && root.parents.length === 0, root.parents)
+    check('commitDiff lists every file the commit touched', root.total === 4 && root.files.length === 4, { total: root.total, files: root.files.map((file) => file.path) })
+    check('a new file reads as an addition', root.files.every((file) => file.status === 'A'), root.files.map((file) => `${file.path}:${file.status}`))
+    check('the patch carries the commit’s lines', root.files.find((file) => file.path === 'README.md')?.patch.includes('+first line'), root.files.find((file) => file.path === 'README.md')?.patch)
+    check('a path with spaces is read whole', root.files.some((file) => file.path === 'name with space.txt'), root.files.map((file) => file.path))
+    check('a bracketed path is literal, not a glob', root.files.some((file) => file.path === 'b[br]acket.txt'), root.files.map((file) => file.path))
+    const rootBinary = root.files.find((file) => file.path === 'bin.dat')
+    check('a binary file is flagged', rootBinary?.binary === true, rootBinary?.patch)
+    check('a binary file has no line counts to add', rootBinary?.additions === 0 && rootBinary?.deletions === 0, rootBinary)
+
+    // A short id is enough to ask; the answer names the full one.
+    const shortened = await actions.handle('commitDiff', { path: dir, sha: rootSha.slice(0, 7) })
+    check('a short sha resolves to the full commit', shortened.sha === rootSha, shortened.sha)
+
+    // One changed line in a long file: the tab must carry the change and its
+    // context, never the file. This is the "僅變更" half of the feature.
+    const longLines = Array.from({ length: 60 }, (_, index) => `line-${String(index + 1).padStart(2, '0')}`)
+    await writeFile(join(dir, 'long.txt'), `${longLines.join('\n')}\n`)
+    await exec(dir, ['add', '-A'])
+    await exec(dir, ['commit', '-m', 'add a long file'])
+    longLines[39] = 'line-40 changed'
+    await writeFile(join(dir, 'long.txt'), `${longLines.join('\n')}\n`)
+    await exec(dir, ['add', '-A'])
+    await exec(dir, ['commit', '-m', 'edit line forty'])
+    const editSha = await revParse()
+    const edit = await actions.handle('commitDiff', { path: dir, sha: editSha })
+    check('only the touched file is in the commit', edit.files.length === 1 && edit.files[0].path === 'long.txt', edit.files.map((file) => file.path))
+    const longPatch = edit.files[0]?.patch ?? ''
+    check('a one-line edit is one hunk', (longPatch.match(/^@@/gm) ?? []).length === 1, longPatch)
+    check('the hunk starts at the change, not at the top of the file', /^@@ -37,7 \+37,7 @@/m.test(longPatch), longPatch.split('\n').find((line) => line.startsWith('@@')))
+    check('the changed line is in the patch', longPatch.includes('+line-40 changed'), longPatch)
+    check('the rest of the file is not', longPatch.includes('line-01') === false && longPatch.includes('line-60') === false, longPatch.slice(0, 200))
+
+    // Rename, delete and a binary edit in one commit.
+    await exec(dir, ['mv', 'name with space.txt', 'renamed file.txt'])
+    await rm(join(dir, 'b[br]acket.txt'), { force: true })
+    await writeFile(join(dir, 'bin.dat'), Buffer.from([9, 9, 9, 9]))
+    await exec(dir, ['add', '-A'])
+    await exec(dir, ['commit', '-m', 'rename, delete, binary'])
+    const mixedSha = await revParse()
+    const mixed = await actions.handle('commitDiff', { path: dir, sha: mixedSha })
+    const renamed = mixed.files.find((file) => file.path === 'renamed file.txt')
+    check('a rename stays one file with its old path', renamed?.status === 'R' && renamed?.oldPath === 'name with space.txt', renamed)
+    check('the rename patch says so', renamed?.patch.includes('rename from name with space.txt'), renamed?.patch)
+    check('a deletion keeps its own status', mixed.files.find((file) => file.path === 'b[br]acket.txt')?.status === 'D', mixed.files.map((file) => `${file.path}:${file.status}`))
+    check('a modified binary stays flagged', mixed.files.find((file) => file.path === 'bin.dat')?.binary === true, mixed.files)
+    check('the stat line covers the whole commit', mixed.additions === 0 && mixed.deletions === 1, { additions: mixed.additions, deletions: mixed.deletions })
+
+    // A merge is the first-parent change, exactly like the hover card's stat.
+    await exec(dir, ['switch', '-c', 'side'])
+    await writeFile(join(dir, 'side.txt'), 'side line\n')
+    await exec(dir, ['add', 'side.txt'])
+    await exec(dir, ['commit', '-m', 'side work'])
+    await exec(dir, ['switch', 'main'])
+    await exec(dir, ['merge', '--no-ff', '--no-edit', 'side'])
+    const mergeSha = await revParse()
+    const merge = await actions.handle('commitDiff', { path: dir, sha: mergeSha })
+    check('a merge reports both parents', merge.merge === true && merge.parents.length === 2, merge.parents)
+    check('a merge is diffed against its first parent', merge.total === 1 && merge.files[0]?.path === 'side.txt', merge.files.map((file) => file.path))
+    check('the merged file carries its added line', merge.files[0]?.patch.includes('+side line'), merge.files[0]?.patch)
+
+    await exec(dir, ['commit', '--allow-empty', '-m', 'nothing to change'])
+    const emptySha = await revParse()
+    const empty = await actions.handle('commitDiff', { path: dir, sha: emptySha })
+    check('an empty commit has no files', empty.files.length === 0 && empty.total === 0, empty)
+
+    const invalid = await actions.handle('commitDiff', { path: dir, sha: 'not-a-sha' }).then(
+      () => 'resolved',
+      () => 'rejected',
+    )
+    equal('a commit id that is not hex is refused', invalid, 'rejected')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
 console.log('\n# edge states (own fixtures)')
 {
   const edge = await mkdtemp(join(tmpdir(), 'dsh-git-edge-'))

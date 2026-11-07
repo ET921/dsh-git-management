@@ -155,6 +155,54 @@ function respond(action, params) {
         additions: 10,
         deletions: 3,
       }
+    case 'commitDiff':
+      return {
+        sha: params.sha,
+        short: String(params.sha).slice(0, 7),
+        author: 'Ada',
+        email: 'ada@example.com',
+        date: new Date().toISOString(),
+        subject: 'wire the sidebar panel',
+        body: '',
+        parents: ['aaaaaaaaaaaaaaaa'],
+        merge: false,
+        additions: 3,
+        deletions: 1,
+        total: 2,
+        truncated: false,
+        files: [
+          {
+            path: 'src/App.tsx',
+            oldPath: null,
+            status: 'M',
+            additions: 3,
+            deletions: 1,
+            binary: false,
+            patch: [
+              'diff --git a/src/App.tsx b/src/App.tsx',
+              'index 1111111..2222222 100644',
+              '--- a/src/App.tsx',
+              '+++ b/src/App.tsx',
+              '@@ -1,4 +1,6 @@',
+              ' import x',
+              '-old line',
+              '+new line',
+              '+added line',
+              '+one more added line',
+              ' export default x',
+            ].join('\n'),
+          },
+          {
+            path: 'assets/logo.png',
+            oldPath: null,
+            status: 'A',
+            additions: 0,
+            deletions: 0,
+            binary: true,
+            patch: ['diff --git a/assets/logo.png b/assets/logo.png', 'new file mode 100644', 'index 0000000..1111111', 'Binary files /dev/null and b/assets/logo.png differ'].join('\n'),
+          },
+        ],
+      }
     case 'branchDetail':
       return { branch: 'main', exists: true, short: 'abc1234', author: 'Ada', date: new Date().toISOString(), subject: 'wire the sidebar panel', upstream: 'origin/main', track: null }
     case 'worktrees':
@@ -304,6 +352,14 @@ check('the tab body is registered', registrations.some((row) => row.declaration.
 check('the tab chip title is registered', registrations.some((row) => row.declaration.name === 'sidebar.right.pane.tab.title' && row.declaration.key === 'dsh-git-management'))
 check('panel declares its locale namespace', registrations.find((row) => row.declaration.name === 'sidebar.right.pane.tab')?.declaration.locale === 'dsh-git-management')
 check('dictionaries have both languages', dictionaries['dsh-git-management']?.zh !== undefined && dictionaries['dsh-git-management']?.en !== undefined)
+
+// The commit tab: independently addressable, so every history click is a tab.
+const commitType = tabTypes.find((definition) => definition.kind === 'git-commit')
+check('a commit tab type is registered', commitType?.id === 'dsh-git-commit', tabTypes.map((definition) => definition.kind))
+check('the commit tab is multi-instance', commitType?.multiple === true, commitType)
+check('the commit tab has no start-page card', Array.isArray(commitType?.guide) && commitType.guide.length === 0, commitType?.guide)
+check('the commit tab body is registered', registrations.some((row) => row.declaration.name === 'sidebar.right.pane.tab' && row.declaration.key === 'dsh-git-commit'))
+check('the commit tab chip is registered', registrations.some((row) => row.declaration.name === 'sidebar.right.pane.tab.title' && row.declaration.key === 'dsh-git-commit'))
 
 // ---- render -------------------------------------------------------------
 
@@ -658,6 +714,130 @@ if (fileRow !== null) {
   }
 } else {
   check('a file row exists to click', false)
+}
+
+// ---- clicking a commit in the history opens its own tab -------------------
+// The row is the way in: the list must stay put and the commit's whole change
+// set must arrive as one tab with a block per file.
+{
+  const commitRow = container.querySelector('.gmg-commit-row')
+  check(
+    'every history row is a click target',
+    commitRow?.getAttribute('role') === 'button' && commitRow?.getAttribute('tabindex') === '0',
+    commitRow?.outerHTML.slice(0, 160),
+  )
+
+  if (commitRow !== null) {
+    const before = tabOpens.length
+    await act(async () => {
+      commitRow.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    check('clicking a commit opens a commit tab', tabOpens.length === before + 1 && tabOpens[before].kind === 'git-commit', tabOpens)
+    check(
+      'the tab carries the commit and its repository as params',
+      tabOpens[before]?.params?.sha === 'deadbeefdeadbeef' && tabOpens[before]?.params?.path === 'C:/demo',
+      tabOpens[before]?.params,
+    )
+    check('the change list is still on screen', container.querySelector('.gmg-file') !== null)
+
+    const params = tabOpens[before]?.params ?? null
+    const commitRegistration = registrations.find((entry) => entry.declaration.name === 'sidebar.right.pane.tab' && entry.declaration.key === 'dsh-git-commit')
+    check('the commit tab body is registered', commitRegistration !== undefined, registrations.map((entry) => entry.declaration.key))
+
+    if (commitRegistration !== undefined && params !== null) {
+      const commitContainer = document.createElement('div')
+      document.body.appendChild(commitContainer)
+      const commitRoot = createRoot(commitContainer)
+      let closed = false
+      await act(async () => {
+        commitRoot.render(
+          React.createElement(commitRegistration.component, {
+            ...commitRegistration.declaration.inject(),
+            actions: { close: () => { closed = true } },
+            useTabInfo: () => ({ tab: { id: 'tab-commit', navigation: { params, revision: 1 } } }),
+          }),
+        )
+        await new Promise((resolve) => setTimeout(resolve, 40))
+      })
+
+      const commitCall = calls.filter((call) => call.action === 'commitDiff').pop()
+      check('the commit tab asks the host for that commit', commitCall?.params?.sha === 'deadbeefdeadbeef', commitCall?.params)
+      check('the tab stacks one block per file', commitContainer.querySelectorAll('.gmg-cdiff-file').length === 2, commitContainer.querySelectorAll('.gmg-cdiff-file').length)
+      check('the header names the commit subject', (commitContainer.querySelector('.gmg-cdiff-subject')?.textContent ?? '').includes('wire the sidebar panel'), commitContainer.querySelector('.gmg-cdiff-subject')?.textContent)
+      check('the header carries the short id', (commitContainer.querySelector('.gmg-sha')?.textContent ?? '') === 'deadbee', commitContainer.querySelector('.gmg-sha')?.textContent)
+      check('the header counts the files', (commitContainer.textContent ?? '').includes('2 個檔案'), commitContainer.querySelector('.gmg-cdiff-subline')?.textContent)
+      check('added lines are drawn', commitContainer.querySelector('.gmg-diffbody .gmg-diff-cell.is-add') !== null)
+      check('removed lines are drawn', commitContainer.querySelector('.gmg-diffbody .gmg-diff-cell.is-del') !== null)
+      check('the file header noise is not repeated', (commitContainer.textContent ?? '').includes('diff --git') === false, commitContainer.textContent?.slice(0, 200))
+      check('a binary file says so instead of drawing', (commitContainer.textContent ?? '').includes('二進位檔'), commitContainer.textContent?.slice(0, 300))
+      const commitCss = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
+      check('file headers stick while their diff scrolls', /\.gmg-cdiff-filehead\s*\{[^}]*position:\s*sticky/.test(commitCss), commitCss.slice(-200))
+
+      // Folding one block leaves its neighbour alone.
+      const firstHead = commitContainer.querySelector('.gmg-cdiff-filehead')
+      await act(async () => {
+        firstHead.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      })
+      check(
+        'folding a file hides only its diff',
+        commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 1 && commitContainer.querySelectorAll('.gmg-cdiff-body').length === 0,
+        commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length,
+      )
+
+      const collapseAll = [...commitContainer.querySelectorAll('button')].find((button) => /收合全部/.test(button.textContent ?? ''))
+      check('a collapse-all control exists', collapseAll !== undefined, commitContainer.querySelector('.gmg-cdiff-subline')?.textContent)
+      if (collapseAll !== undefined) {
+        await act(async () => {
+          collapseAll.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        })
+        check('collapse all folds every block', commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 2)
+        const expandAll = [...commitContainer.querySelectorAll('button')].find((button) => /展開全部/.test(button.textContent ?? ''))
+        await act(async () => {
+          expandAll?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        })
+        check('expand all brings the diffs back', commitContainer.querySelectorAll('.gmg-cdiff-file.is-folded').length === 0 && commitContainer.querySelectorAll('.gmg-cdiff-body').length === 1)
+      }
+
+      const backButton = [...commitContainer.querySelectorAll('button')].find((button) => (button.textContent ?? '').includes('返回'))
+      if (backButton !== undefined) {
+        await act(async () => {
+          backButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        })
+        check('back asks the tab to close', closed === true)
+      } else {
+        check('a back button exists', false)
+      }
+
+      await act(async () => {
+        commitRoot.unmount()
+      })
+      commitContainer.remove()
+
+      // The chip names the commit, so a strip of commit tabs is readable.
+      const commitTitle = registrations.find((entry) => entry.declaration.name === 'sidebar.right.pane.tab.title' && entry.declaration.key === 'dsh-git-commit')
+      if (commitTitle !== undefined) {
+        const titleContainer = document.createElement('div')
+        document.body.appendChild(titleContainer)
+        const titleRoot = createRoot(titleContainer)
+        await act(async () => {
+          titleRoot.render(
+            React.createElement(commitTitle.component, {
+              ...commitTitle.declaration.inject(),
+              useTabInfo: () => ({ tab: { id: 'tab-commit', navigation: { params, revision: 1 } } }),
+            }),
+          )
+        })
+        check('the commit chip names the commit', (titleContainer.textContent ?? '').includes('wire the sidebar panel'), titleContainer.textContent)
+        await act(async () => {
+          titleRoot.unmount()
+        })
+        titleContainer.remove()
+      }
+    }
+  } else {
+    check('a commit row exists to click', false)
+  }
 }
 
 // Hovering a commit floats its card in the gap to the left of the column.

@@ -238,7 +238,7 @@ function GitPanel(props) {
   }
 
   const history = isRepo
-    ? h(HistoryCard, { log: state.log, branches: state.branches, t, lang, expanded: showAllHistory, onToggle: () => setShowAllHistory((value) => !value) })
+    ? h(HistoryCard, { path: state.path, log: state.log, branches: state.branches, t, lang, expanded: showAllHistory, onToggle: () => setShowAllHistory((value) => !value) })
     : null
 
   const github = isRepo ? h(GithubCard, { status: snapshot, state, t, busy }) : null
@@ -322,14 +322,23 @@ function refScope(kind, t) {
  * up. Refs ride on the row instead of the id: a reader needs to know "this is
  * main" far more often than "this is 1268d25", and the id is in the hover card.
  *
- * @param props - `{ log, branches, t, lang, expanded, onToggle }`.
+ * Every row is also the way into that commit: clicking it opens the commit's
+ * change set as its own tab in the same column, the way Cursor's history does.
+ * Clicking a second commit opens a second tab; the list itself never moves.
+ *
+ * @param props - `{ path, log, branches, t, lang, expanded, onToggle }`.
  * @returns the card.
  */
 function HistoryCard(props) {
-  const { log, branches, t, lang, expanded, onToggle } = props
+  const { path, log, branches, t, lang, expanded, onToggle } = props
   const visible = useMemo(() => (expanded ? log : log.slice(0, HISTORY_PREVIEW)), [log, expanded])
   const layout = useMemo(() => layoutHistory(visible), [visible])
   const railWidth = useMemo(() => graphRailWidth(layout), [layout])
+
+  const openCommit = (commit) => {
+    if (typeof gmgSidebarBridge.openCommit !== 'function') return
+    gmgSidebarBridge.openCommit({ path, sha: commit.sha, short: commit.short, subject: commit.subject })
+  }
 
   return h(
     'div',
@@ -355,12 +364,25 @@ function HistoryCard(props) {
               const refs = historyRefs(commit, branches)
               const shown = refs.slice(0, 2)
               const extra = refs.length - shown.length
+              const open = () => openCommit(commit)
               return h(
                 HoverTarget,
                 { key: commit.sha, card: h(CommitHoverCard, { commit, t }) },
                 h(
                   'div',
-                  { className: 'gmg-commit-row' },
+                  {
+                    className: 'gmg-commit-row',
+                    role: 'button',
+                    tabIndex: 0,
+                    title: `${commit.short} — ${t('openCommitDiffHint')}`,
+                    onClick: open,
+                    onKeyDown: (event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        open()
+                      }
+                    },
+                  },
                   shown.map((ref) => h('span', { key: ref.kind + ref.name, className: `gmg-ref is-${ref.kind}`, title: `${refScope(ref.kind, t)}：${ref.name}` }, refGlyph(ref.kind), ref.name)),
                   extra > 0 ? h('span', { className: 'gmg-ref-more', title: refs.map((ref) => ref.name).join(', ') }, `+${extra}`) : null,
                   h('span', { className: 'gmg-subject', title: commit.subject }, commit.subject),

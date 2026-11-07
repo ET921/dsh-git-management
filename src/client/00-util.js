@@ -165,10 +165,11 @@ function pathKey(path) {
 let gmgWorkspaceBridge = null
 
 /**
- * The right column's tab opener, installed by the plugin. Clicking a file opens
- * a diff tab in the same column, so the list and the conversation stay put.
+ * The right column's tab openers, installed by the plugin. Clicking a file
+ * opens a diff tab and clicking a commit opens a commit tab, both in the same
+ * column, so the list and the conversation stay exactly where they were.
  */
-let gmgSidebarBridge = { openDiff: null }
+let gmgSidebarBridge = { openDiff: null, openCommit: null }
 
 /**
  * Whether this GUI can open a directory as a workspace.

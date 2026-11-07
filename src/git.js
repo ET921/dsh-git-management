@@ -23,6 +23,19 @@ const DIFF_EXIT = 1
 export const MAX_OUTPUT_BYTES = 6 * 1024 * 1024
 
 /**
+ * How many per-file patches one commit view reads.
+ *
+ * A commit that touches a thousand files is a generated or vendored change; its
+ * diff is not something a sidebar tab can render usefully, and reading it one
+ * file at a time would take seconds. Past this cap the tab still lists the
+ * total and says how many patches it drew.
+ */
+const MAX_COMMIT_DIFF_FILES = 60
+
+/** How many `git show` children run at once for one commit. */
+const COMMIT_DIFF_CONCURRENCY = 4
+
+/**
  * One failed Git command, carrying the machine-readable excerpt the panel shows.
  */
 export class GitError extends Error {
@@ -62,6 +75,76 @@ function firstLine(text) {
  */
 function pathspec(path) {
   return `:(literal)${path}`
+}
+
+/**
+ * One numstat field as a number.
+ *
+ * Binary files report `-` on both sides; they are files with no line delta, not
+ * a failed parse.
+ *
+ * @param value - the raw field.
+ * @returns the count, or 0.
+ */
+function numstatCount(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : 0
+}
+
+/**
+ * Split `git show --numstat -z` into one entry per path.
+ *
+ * `-z` keeps names verbatim and turns a rename into three records: the stat
+ * fields with an empty path, then the old path and the new path. Reading the
+ * stream as `split('\0')` and consuming those two extra records is what keeps a
+ * path with a tab or a quote intact.
+ *
+ * @param text - the raw `-z` stream.
+ * @returns `[{ path, oldPath, additions, deletions }]`.
+ */
+function parseNumstatZ(text) {
+  const records = String(text ?? '').split('\0')
+  const entries = []
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]
+    if (record === '') continue
+    const firstTab = record.indexOf('\t')
+    const secondTab = record.indexOf('\t', firstTab + 1)
+    if (firstTab === -1 || secondTab === -1) continue
+    const additions = record.slice(0, firstTab)
+    const deletions = record.slice(firstTab + 1, secondTab)
+    const path = record.slice(secondTab + 1)
+    if (path === '') {
+      const oldPath = records[index + 1] ?? ''
+      const newPath = records[index + 2] ?? ''
+      index += 2
+      if (oldPath !== '' && newPath !== '') {
+        entries.push({ path: newPath, oldPath, additions: numstatCount(additions), deletions: numstatCount(deletions) })
+      }
+      continue
+    }
+    entries.push({ path, oldPath: null, additions: numstatCount(additions), deletions: numstatCount(deletions) })
+  }
+  return entries
+}
+
+/**
+ * The one-letter status a file's patch implies.
+ *
+ * The patch header is the only place git says "new", "deleted" or "renamed" for
+ * a single path, and it is also what a numstat line does not carry. The
+ * markers are matched at the start of a line, so a source line that merely
+ * quotes "new file mode" (always prefixed with `+` or `-`) cannot match.
+ *
+ * @param patch - that file's patch.
+ * @param entry - the numstat entry (a rename is known there already).
+ * @returns `A`, `D`, `R` or `M`.
+ */
+function patchStatus(patch, entry) {
+  if (entry.oldPath !== null) return 'R'
+  if (/^new file mode /m.test(patch)) return 'A'
+  if (/^deleted file mode /m.test(patch)) return 'D'
+  return 'M'
 }
 
 /**
@@ -736,6 +819,102 @@ export function createGit(exec) {
   }
 
   /**
+   * One commit's whole change set: the same metadata the hover card shows,
+   * plus one patch per touched file.
+   *
+   * This is what a history row opens. The file list comes from `--numstat -z`
+   * (stat fields, status glyphs, and rename pairs in one pass), and each patch
+   * is read with the file itself as a literal pathspec — the same rule the
+   * working-tree diff uses. Reading per file rather than splitting one big
+   * patch keeps names with spaces, quotes or tabs unambiguous, and lets a
+   * rename be diffed against both of its paths so git reports the rename
+   * instead of "one deleted file, one added file".
+   *
+   * `hunks` is deliberate: history is read to see what changed, not to re-read
+   * the file. A merge is diffed against its first parent, exactly like the
+   * stat line in `commitDetail`, so the tab never claims a merge changed
+   * everything both sides touched.
+   *
+   * @param cwd - repository directory.
+   * @param sha - the commit id (the panel passes the full sha from its log).
+   * @returns `{ sha, short, author, email, date, subject, body, parents, merge,
+   *   files, total, truncated }`, each file being
+   *   `{ path, oldPath, status, additions, deletions, binary, patch }`.
+   */
+  async function commitDiff(cwd, sha) {
+    const ref = String(sha ?? '').trim() || 'HEAD'
+    // The page only ever sends a sha it read from `log`; anything else is a
+    // wiring mistake, and validating it here also keeps a value beginning with
+    // `-` from ever reaching git's option parser.
+    if (/^[0-9a-f]{4,64}$/i.test(ref) === false) throw new GitError(`not a commit id: ${ref}`, {})
+    const resolved = await exec(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { timeoutMs: 10000 })
+    if (resolved.code !== 0) {
+      throw new GitError(`no such commit: ${ref}`, { argv: ['git', 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`], ...resolved })
+    }
+    const full = String(resolved.stdout).trim().split(/\r?\n/)[0]
+
+    const info = await must(cwd, ['show', '-s', '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%b%x1f%P', full], { timeoutMs: 20000 })
+    const [commitSha, short, author, email, date, subject, body, parents] = String(info.stdout).split('\x1f')
+    const parentList = (parents ?? '').trim() === '' ? [] : String(parents).trim().split(' ').filter((parent) => parent !== '')
+    const merge = parentList.length > 1
+    const mergeArgs = merge ? ['--diff-merges=first-parent'] : []
+
+    const stat = await exec(cwd, ['show', '--numstat', '-z', '--format=', ...mergeArgs, full], { timeoutMs: 30000 })
+    if (stat.code !== 0) {
+      throw new GitError(firstLine(stat.stderr) || 'git show failed', { argv: ['git', 'show', '--numstat', '-z', '--format=', ...mergeArgs, full], ...stat })
+    }
+    const entries = parseNumstatZ(String(stat.stdout))
+
+    /**
+     * One file's patch, limited to that path.
+     * @param entry - the numstat entry.
+     * @returns the file row the tab renders.
+     */
+    const readOne = async (entry) => {
+      const paths = entry.oldPath === null ? [entry.path] : [entry.oldPath, entry.path]
+      const args = ['show', '--format=', '--patch', '--no-color', '--unified=3', '--find-renames', ...mergeArgs, full, '--', ...paths.map(pathspec)]
+      const result = await exec(cwd, args, { timeoutMs: 30000 })
+      const patch = String(result.stdout)
+      if (result.code !== 0 && result.code !== DIFF_EXIT) {
+        throw new GitError(firstLine(result.stderr) || 'git show failed', { argv: ['git', ...args], ...result })
+      }
+      return {
+        path: entry.path,
+        oldPath: entry.oldPath,
+        additions: entry.additions,
+        deletions: entry.deletions,
+        status: patchStatus(patch, entry),
+        binary: /^Binary files .* differ$/m.test(patch) || /^GIT binary patch$/m.test(patch),
+        patch,
+      }
+    }
+
+    const loadable = entries.slice(0, MAX_COMMIT_DIFF_FILES)
+    const files = []
+    for (let index = 0; index < loadable.length; index += COMMIT_DIFF_CONCURRENCY) {
+      const batch = loadable.slice(index, index + COMMIT_DIFF_CONCURRENCY)
+      files.push(...(await Promise.all(batch.map((entry) => readOne(entry)))))
+    }
+
+    return {
+      sha: commitSha ?? full,
+      short: short ?? String(full).slice(0, 7),
+      author: author ?? '',
+      email: email ?? '',
+      date: date ?? null,
+      subject: subject ?? '',
+      body: String(body ?? '').trim(),
+      parents: parentList,
+      merge,
+      additions: entries.reduce((sum, entry) => sum + entry.additions, 0),
+      deletions: entries.reduce((sum, entry) => sum + entry.deletions, 0),
+      files,
+      total: entries.length,
+      truncated: entries.length > files.length,
+    }
+  }
+
+  /**
    * Where one branch points and how it tracks its upstream.
    * @param cwd - repository directory.
    * @param branch - the local branch name.
@@ -821,6 +1000,7 @@ export function createGit(exec) {
     removeWorktree,
     pruneWorktrees,
     commitDetail,
+    commitDiff,
     branchDetail,
     commitAuthor,
     userEmail,

@@ -272,8 +272,10 @@ const PANEL_CSS = `
   height: 26px; padding: 0 12px;
   padding-right: calc(var(--gmg-graph-w, 0px) + 12px);
   box-sizing: border-box;
+  cursor: pointer;
 }
 .gmg-commit-row:hover { background: var(--dsw-alias-bg-layer-2); }
+.gmg-commit-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
 .gmg-graph { position: absolute; top: 0; right: 0; pointer-events: none; overflow: visible; }
 .gmg-graph-edge { fill: none; stroke-width: 1.9; stroke-linecap: round; opacity: 1; }
 .gmg-graph-dot { stroke-width: 2; }
@@ -506,6 +508,42 @@ const PANEL_CSS = `
 .gmg-statbar-add { height: 100%; background: var(--gmg-ok); }
 .gmg-statbar-del { height: 100%; background: var(--gmg-bad); }
 
+/* ---- the commit-diff tab: one commit, every file stacked ---- */
+.gmg-cdiff-head {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 10px 7px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+  flex: none;
+}
+.gmg-cdiff-headline { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.gmg-cdiff-headline .gmg-btn { flex: none; padding: 0 6px; }
+.gmg-cdiff-subject { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gmg-cdiff-subline { display: flex; align-items: center; gap: 7px; min-width: 0; flex-wrap: wrap; }
+.gmg-cdiff-meta { font-size: 11px; color: var(--dsw-alias-label-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gmg-cdiff-scroll { flex: 1; overflow: auto; overscroll-behavior: contain; padding-bottom: 24px; }
+.gmg-cdiff-files { display: flex; flex-direction: column; }
+.gmg-cdiff-file { border-bottom: 1px solid var(--dsw-alias-border-l1); }
+/* Each file header sticks to the top of the scroll while its own diff passes
+   under it, which is how a reader keeps track of which file is on screen. */
+.gmg-cdiff-filehead {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px 5px 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  cursor: pointer;
+  font-size: 12px;
+}
+.gmg-cdiff-filehead:hover { background: var(--dsw-alias-bg-layer-1); }
+.gmg-cdiff-filehead:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
+.gmg-cdiff-chevron { display: inline-flex; flex: none; color: var(--dsw-alias-label-secondary); transition: transform .12s ease; }
+.gmg-cdiff-file.is-folded .gmg-cdiff-chevron { transform: rotate(-90deg); }
+.gmg-cdiff-rename { font-size: 10.5px; color: var(--dsw-alias-label-secondary); opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38%; flex: none; }
+.gmg-cdiff-body .gmg-diffbody { padding-bottom: 0; }
+.gmg-cdiff-note { padding: 8px 12px; font-size: 11.5px; color: var(--dsw-alias-label-secondary); }
+.gmg-cdiff-failure { display: flex; flex-direction: column; }
+
 /* ---- the right-sidebar tab: a ~320-420px column, not a page ---- */
 .gmg-root.is-compact .gmg-page { max-width: none; padding: 8px 8px 28px; gap: 8px; }
 .gmg-root.is-compact .gmg-head { gap: 8px; align-items: center; padding: 2px 2px 0; }
@@ -539,6 +577,9 @@ const PANEL_CSS = `
 .gmg-root.is-compact .gmg-diffbody.is-split .gmg-diffrow.is-splitrow { grid-template-columns: 34px minmax(0, 1fr) 34px minmax(0, 1fr); }
 .gmg-root.is-compact .gmg-diff-no { padding: 0 5px 0 1px; }
 .gmg-root.is-compact .gmg-diff-cell { padding: 0 8px; }
+.gmg-root.is-compact .gmg-cdiff-head { padding: 7px 8px 6px; }
+.gmg-root.is-compact .gmg-cdiff-subject { font-size: 12px; }
+.gmg-root.is-compact .gmg-cdiff-filehead { padding: 4px 6px; }
 `
 
 /**
