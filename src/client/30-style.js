@@ -357,6 +357,10 @@ const PANEL_CSS = `
   border-color: color-mix(in srgb, var(--gmg-warn) 45%, transparent);
 }
 .gmg-ref svg { flex: none; opacity: 1; }
+/* The name is its own flex item so a long ref can end in an ellipsis instead of
+   being sliced at the chip's edge; min-width: 0 is what lets a flex item shrink
+   below its content width. */
+.gmg-ref-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gmg-ref-dot {
   flex: none; width: 6px; height: 6px; border-radius: 50%;
   background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, #fff 35%, transparent);
