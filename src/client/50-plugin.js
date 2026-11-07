@@ -150,6 +150,8 @@ const zh = {
   refRemote: '遠端分支',
   refTag: '標籤',
   refDetached: '分離 HEAD',
+  collapseGroup: '收合這一組',
+  expandGroup: '展開這一組',
 }
 
 /** English copy. */
@@ -280,6 +282,8 @@ const en = {
   refRemote: 'remote branch',
   refTag: 'tag',
   refDetached: 'detached HEAD',
+  collapseGroup: 'Collapse this group',
+  expandGroup: 'Expand this group',
 }
 
 /**

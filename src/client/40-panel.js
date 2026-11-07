@@ -946,13 +946,34 @@ function CommitBox(props) {
  */
 function ChangeGroup(props) {
   const { title, rows, staged, t, empty, conflicts } = props
+  // The list is the tallest thing in the column and the one readers fold away
+  // most often: one click on the header collapses it, and the count stays
+  // visible so a folded group still says how much is inside.
+  const [collapsed, setCollapsed] = useState(false)
   if (rows.length === 0 && empty === null) return null
+  const body =
+    rows.length === 0
+      ? h('div', { className: 'gmg-empty' }, empty)
+      : h('div', { className: 'gmg-files' }, rows.map((row) => h(FileRow, { key: `${staged ? 's' : 'w'}:${row.path}`, row, staged, t, conflicts })))
   return h(
     'div',
-    { className: 'gmg-group' },
+    { className: collapsed ? 'gmg-group is-collapsed' : 'gmg-group' },
     h(
       'div',
       { className: 'gmg-group-head' },
+      h(
+        'button',
+        {
+          className: 'gmg-collapse',
+          type: 'button',
+          title: collapsed ? t('expandGroup') : t('collapseGroup'),
+          'aria-label': collapsed ? t('expandGroup') : t('collapseGroup'),
+          'aria-expanded': collapsed === false,
+          disabled: rows.length === 0,
+          onClick: () => setCollapsed((value) => !value),
+        },
+        h(IconChevronDown, { size: 12 }),
+      ),
       title,
       h('span', { className: 'gmg-count' }, String(rows.length)),
       h('span', { className: 'gmg-spacer' }),
@@ -970,9 +991,7 @@ function ChangeGroup(props) {
           )
         : null,
     ),
-    rows.length === 0
-      ? h('div', { className: 'gmg-empty' }, empty)
-      : h('div', { className: 'gmg-files' }, rows.map((row) => h(FileRow, { key: `${staged ? 's' : 'w'}:${row.path}`, row, staged, t, conflicts }))),
+    collapsed ? null : body,
   )
 }
 

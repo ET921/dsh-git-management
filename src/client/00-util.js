@@ -227,6 +227,10 @@ function relativeTime(iso, locale) {
 
 /**
  * The panel's single colour for one porcelain status letter.
+ *
+ * These read the panel's own saturated marks rather than the theme's state
+ * accents: at 11px on a busy list the calmer tokens were barely distinct.
+ *
  * @param status - M, A, D, R, C, U or T.
  * @returns a CSS custom-property name.
  */
@@ -234,15 +238,15 @@ function statusColor(status) {
   switch (status) {
     case 'A':
     case 'U':
-      return 'var(--dsw-alias-state-success-primary)'
+      return 'var(--gmg-ok)'
     case 'D':
-      return 'var(--dsw-alias-state-error-primary)'
+      return 'var(--gmg-bad)'
     case 'M':
     case 'T':
-      return 'var(--dsw-alias-state-warn-primary)'
+      return 'var(--gmg-warn)'
     case 'R':
     case 'C':
-      return 'var(--dsw-alias-brand-primary)'
+      return 'var(--gmg-local)'
     default:
       return 'var(--dsw-alias-label-secondary)'
   }

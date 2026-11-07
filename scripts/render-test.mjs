@@ -339,6 +339,30 @@ check('panel reads history', calls.some((call) => call.action === 'log'), calls.
 check('title is localized to Chinese', text().includes('源代码管理'), text().slice(0, 200))
 check('branch is shown', text().includes('main'), text().slice(0, 200))
 
+// A group folds away on one click, and the count stays readable while folded.
+{
+  const changesGroup = [...container.querySelectorAll('.gmg-group')].find((group) => (group.querySelector('.gmg-group-head')?.textContent ?? '').includes('更改'))
+  const fold = changesGroup?.querySelector('.gmg-collapse')
+  check('the changes group has a fold control', fold !== null && fold?.tagName === 'BUTTON', changesGroup?.querySelector('.gmg-group-head')?.textContent)
+  check('it starts expanded', fold?.getAttribute('aria-expanded') === 'true', fold?.getAttribute('aria-expanded'))
+  const filesBefore = changesGroup?.querySelectorAll('.gmg-file').length ?? 0
+  check('the group shows its rows while open', filesBefore > 0, filesBefore)
+  if (fold !== null && fold !== undefined) {
+    await act(async () => {
+      fold.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    const folded = [...container.querySelectorAll('.gmg-group')].find((group) => (group.querySelector('.gmg-group-head')?.textContent ?? '').includes('更改'))
+    check('folding hides the rows', folded?.querySelectorAll('.gmg-file').length === 0, folded?.querySelectorAll('.gmg-file').length)
+    check('the folded header keeps the count', (folded?.querySelector('.gmg-count')?.textContent ?? '') === String(filesBefore), folded?.querySelector('.gmg-count')?.textContent)
+    check('the fold control reports the state', folded?.querySelector('.gmg-collapse')?.getAttribute('aria-expanded') === 'false')
+    await act(async () => {
+      folded?.querySelector('.gmg-collapse')?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+    })
+    const reopened = [...container.querySelectorAll('.gmg-group')].find((group) => (group.querySelector('.gmg-group-head')?.textContent ?? '').includes('更改'))
+    check('folding again brings the rows back', reopened?.querySelectorAll('.gmg-file').length === filesBefore, reopened?.querySelectorAll('.gmg-file').length)
+  }
+}
+
 // The local/remote relationship in the branch bar: ahead 2, behind 1 is the
 // diverged case, and it must say so in class as well as in arrows.
 {
@@ -383,8 +407,10 @@ check('history subject is rendered', text().includes('wire the sidebar panel'), 
   check('a remote ref carries the cloud glyph', remoteChip?.querySelector('svg') !== null, remoteChip?.innerHTML)
   check('a local branch ref carries the branch glyph', branchChip?.querySelector('svg') !== null, branchChip?.innerHTML)
   const refCss = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
-  check('local and remote are different hues', /--gmg-remote:\s*color-mix/.test(refCss) && /\.gmg-ref\.is-remote\s*\{[^}]*var\(--gmg-remote\)/.test(refCss), refCss.match(/--gmg-remote[^;]*/)?.[0])
-  check('a local branch is the brand hue', /\.gmg-ref\.is-branch\s*\{[^}]*var\(--dsw-alias-brand-primary\)/.test(refCss))
+  check('local and remote are different hues', /--gmg-remote:\s*#[0-9a-f]{6}/i.test(refCss) && /\.gmg-ref\.is-remote\s*\{[^}]*var\(--gmg-remote\)/.test(refCss), refCss.match(/--gmg-remote[^;]*/)?.[0])
+  check('a local branch is the local hue', /--gmg-local:\s*#[0-9a-f]{6}/i.test(refCss) && /\.gmg-ref\.is-branch\s*\{[^}]*var\(--gmg-local\)/.test(refCss), refCss.match(/--gmg-local[^;]*/)?.[0])
+  check('the checked-out chip is filled, not tinted', /\.gmg-ref\.is-head\s*\{[^}]*background:\s*var\(--gmg-local\)/.test(refCss))
+  check('light surfaces get their own darker inks', /prefers-color-scheme:\s*light/.test(refCss) && /--gmg-remote:\s*#7c3aed/i.test(refCss))
 }
 check('github card names the remote', text().includes('acme/demo'), text().slice(0, 600))
 check('the github card lists the pulls tab', text().includes('拉取请求'), text().slice(-400))

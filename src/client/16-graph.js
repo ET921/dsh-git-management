@@ -28,18 +28,20 @@ const GRAPH_PAD = 7
 const GRAPH_WIDTH_BUDGET = 104
 
 /**
- * Lane colours: the theme's own accents first, so light and dark follow the GUI,
- * then three fixed hues for the lanes beyond them.
+ * Lane colours: a saturated set, because the theme's accents are calmer than a
+ * commit graph can afford — three lanes and a merge have to be told apart at a
+ * glance. Fixed hues rather than tokens, so a lane keeps its colour across
+ * themes and a reader learns "green is that branch".
  */
 const GRAPH_COLORS = [
-  'var(--dsw-alias-brand-primary)',
-  'var(--dsw-alias-state-success-primary)',
-  'var(--dsw-alias-state-warn-primary)',
-  'var(--dsw-alias-state-error-primary)',
-  '#8b7cf6',
-  '#2fb3c8',
-  '#d0729e',
-  '#b0893a',
+  '#3b82f6',
+  '#22c55e',
+  '#f59e0b',
+  '#ef4444',
+  '#a855f7',
+  '#06b6d4',
+  '#ec4899',
+  '#84cc16',
 ]
 
 /**
