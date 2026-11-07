@@ -93,7 +93,7 @@ C:\Users\user\AppData\Roaming\dsh-desktop\harness\profiles\web\
 ```bash
 npm run build        # 產出 lib/
 npm run verify       # 135 項：Git 引擎 + 動作表 + 邊界狀態（bare／detached／merge／衝突）+ 提交差異 + HTTP 路由守衛 + 打包檢查
-npm run test:render  # 152 項：jsdom + 真的 React，掛起 lib/client.js 渲染面板、檔案 diff 與提交 diff 分頁
+npm run test:render  # 159 項：jsdom + 真的 React，掛起 lib/client.js 渲染面板、檔案 diff 與提交 diff 分頁
 ```
 
 - `scripts/verify.mjs`：對真的 `git` 二進位驗證 status/stage/commit/diff/log/branches/remote 與錯誤處理，含路徑有空白、含 `[` 的檔名，以及 bare repo、detached HEAD、merge 統計、`merge --abort`；提交差異另有自己的 repo，驗 root commit、單行修改只帶 hunk、改名（舊路徑）、刪除、二進位、merge 的第一父提交與空提交；另有一段直接驅動 `/dsh-git/api` 的 handler，驗證 Content-Type 與工作區白名單。

@@ -952,7 +952,9 @@ function CommitBox(props) {
           type: 'button',
           disabled: !canCommit,
           onClick: submit,
-          title: t('commitHint'),
+          // A disabled button with nothing to say is a dead end: name the
+          // reason it cannot be pressed, while its label stays readable.
+          title: canCommit ? t('commitHint') : blocked ? t('conflictBlockHint') : state.message.trim() === '' ? t('commitNeedsMessage') : t('commitNeedsStaged'),
         },
         busy === 'commit' ? h(IconRefresh, { size: 13 }) : h(IconCheck, { size: 13 }),
         t('commit'),

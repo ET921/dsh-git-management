@@ -435,6 +435,27 @@ check('staged file name is shown', text().includes('App.tsx'), text().slice(0, 4
 check('a path with a space survives rendering', text().includes('read me.md'), text().slice(0, 400))
 check('line counts are shown', text().includes('+12') && text().includes('-3'), text().slice(0, 400))
 check('commit button is rendered disabled without a message', container.querySelector('.gmg-btn.is-primary') !== null)
+
+// A disabled primary used to be faded to 45%, which left a pale label on a pale
+// surface: it read as an empty grey box. It must stay legible and say why.
+{
+  const commit = container.querySelector('.gmg-commit .gmg-btn.is-primary')
+  check('the commit button is disabled before staging', commit?.disabled === true, commit?.outerHTML?.slice(0, 120))
+  check('the disabled button still carries its label', (commit?.textContent ?? '').includes('提交'), commit?.textContent)
+  check('the disabled button explains why', /先/.test(commit?.getAttribute('title') ?? ''), commit?.getAttribute('title'))
+  const css = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
+  check('a disabled primary is not just faded', /\.gmg-btn\.is-primary:disabled\s*\{[^}]*opacity:\s*1/.test(css) && /\.gmg-btn\.is-primary:disabled\s*\{[^}]*color:\s*color-mix/.test(css), css.match(/\.gmg-btn\.is-primary:disabled[^}]*/)?.[0])
+}
+
+// The light theme needs its own surfaces: the theme's layers are white on white.
+{
+  const css = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
+  const lightBlock = css.slice(css.indexOf('prefers-color-scheme: light'))
+  const scope = lightBlock.slice(0, lightBlock.indexOf('}'))
+  check('cards, controls and edges get light-theme values', ['--gmg-surface', '--gmg-control', '--gmg-edge'].every((name) => scope.includes(`${name}:`)), scope.slice(0, 160))
+  check('the card reads its theme-aware surface', /\.gmg-card\s*\{[^}]*var\(--gmg-surface\)/.test(css))
+  check('a button reads its theme-aware surface', /\.gmg-btn\s*\{[^}]*var\(--gmg-control\)/.test(css))
+}
 check('history subject is rendered', text().includes('wire the sidebar panel'), text().slice(0, 600))
 
 // ---- the history rail ----------------------------------------------------
