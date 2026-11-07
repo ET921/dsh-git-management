@@ -45,7 +45,7 @@ function GitPanel(props) {
     const tick = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       const current = gitStore.get()
-      if (current.path !== null && current.busy === null) gitStore.refresh()
+      if (current.path !== null && current.busy === null) gitStore.refreshStatus()
     }
     const timer = window.setInterval(tick, 8000)
     const onFocus = () => tick()
@@ -157,6 +157,25 @@ function GitPanel(props) {
   let body = null
   if (!state.ready) {
     body = h('div', { className: 'gmg-card' }, h('div', { className: 'gmg-empty' }, t('loading')))
+  } else if (state.path === null && state.loadFailed === true) {
+    // The last workspace read failed. Saying "pick a workspace" here would be a
+    // lie — the list is empty because nobody could read it — so the card offers
+    // the retry the user needs instead.
+    body = h(
+      'div',
+      { className: 'gmg-card' },
+      h('div', { className: 'gmg-empty' }, t('loadReposFailed')),
+      h(
+        'div',
+        { className: 'gmg-form' },
+        h(
+          'button',
+          { className: 'gmg-btn is-primary', type: 'button', disabled: busy !== null, onClick: () => gitStore.loadRepos() },
+          h(IconRefresh, { size: 13 }),
+          t('loadRepos'),
+        ),
+      ),
+    )
   } else if (state.path === null) {
     body = h(
       'div',
@@ -214,6 +233,7 @@ function GitPanel(props) {
       snapshot.conflicts.length > 0
         ? h(ChangeGroup, { title: t('conflicts'), rows: snapshot.conflicts, staged: false, conflicts: true, t, empty: null })
         : null,
+      snapshot.conflicts.length > 0 ? h(ConflictBar, { t, busy }) : null,
     )
   }
 
@@ -798,11 +818,21 @@ function CommitBox(props) {
   const { status, state, t, busy } = props
   const stagedCount = status.staged.length
   const changeCount = status.changes.length
-  const canCommit = state.message.trim() !== '' && (stagedCount > 0 || state.stageAll) && busy === null
+  const blocked = status.conflicts.length > 0
+  const canCommit = state.message.trim() !== '' && (stagedCount > 0 || state.stageAll) && busy === null && !blocked
 
   const submit = () => {
     if (!canCommit) return
     gitStore.commit()
+  }
+
+  const toggleAmend = (checked) => {
+    gitStore.setFlag('amend', checked)
+    // Preview the message an amend would replace, but never overwrite a draft.
+    if (checked && gitStore.get().message.trim() === '') {
+      const head = gitStore.get().log[0]
+      if (typeof head?.subject === 'string' && head.subject !== '') gitStore.setMessage(head.subject)
+    }
   }
 
   return h(
@@ -841,10 +871,11 @@ function CommitBox(props) {
           type: 'checkbox',
           checked: state.amend,
           disabled: !status.oid,
-          onChange: (event) => gitStore.setFlag('amend', event.target.checked),
+          onChange: (event) => toggleAmend(event.target.checked),
         }),
         t('amend'),
       ),
+      blocked ? h('span', { className: 'gmg-hint gmg-conflict-hint' }, t('conflictBlockHint')) : null,
       h('span', { className: 'gmg-spacer' }),
       h(
         'span',
@@ -906,6 +937,41 @@ function ChangeGroup(props) {
 }
 
 /**
+ * The conflict summary strip: the blocked-commit explanation and the one way
+ * out of a merge that went wrong.
+ * @param props - `{ t, busy }`.
+ * @returns the strip element.
+ */
+function ConflictBar(props) {
+  const { t, busy } = props
+  return h(
+    'div',
+    { className: 'gmg-group gmg-conflict' },
+    h(
+      'div',
+      { className: 'gmg-group-head' },
+      h(IconAlert, { size: 13 }),
+      t('conflicts'),
+      h('span', { className: 'gmg-spacer' }),
+      h(
+        'button',
+        {
+          className: 'gmg-btn is-danger',
+          type: 'button',
+          disabled: busy !== null,
+          onClick: () => {
+            if (!window.confirm(t('mergeAbortConfirm'))) return
+            gitStore.abortMerge()
+          },
+        },
+        t('abortMerge'),
+      ),
+    ),
+    h('div', { className: 'gmg-hint', style: { padding: '0 12px 10px' } }, t('conflictBlockHint')),
+  )
+}
+
+/**
  * One changed file. Clicking it opens that file's diff in the centre column.
  * @param props - `{ row, staged, t, conflicts }`.
  * @returns the row element.
@@ -946,7 +1012,25 @@ function FileRow(props) {
         h(IconMinus, { size: 13 }),
       ),
     )
-  } else if (!conflicts) {
+  } else if (conflicts) {
+    actions.push(
+      h(
+        'button',
+        {
+          key: 'resolve',
+          className: 'gmg-icon-btn',
+          type: 'button',
+          title: t('markResolved'),
+          'aria-label': t('markResolved'),
+          onClick: (event) => {
+            event.stopPropagation()
+            gitStore.fileAction('stage', [row.path], null)
+          },
+        },
+        h(IconCheck, { size: 13 }),
+      ),
+    )
+  } else {
     actions.push(
       h(
         'button',
@@ -1132,6 +1216,18 @@ function GithubCard(props) {
             }),
             h('button', { className: 'gmg-btn is-primary', type: 'button', onClick: () => gitStore.saveToken(tokenDraft) }, t('save')),
             h('a', { className: 'gmg-btn is-ghost', href: 'https://github.com/settings/tokens', target: '_blank', rel: 'noreferrer' }, h(IconExternal, { size: 12 }), t('createToken')),
+          )
+        : null,
+      github.reason === 'error'
+        ? h(
+            'div',
+            { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+            h('span', { className: 'gmg-hint', style: { flex: 1 } }, github.error ?? ''),
+            h(
+              'button',
+              { className: 'gmg-btn', type: 'button', disabled: busy !== null, onClick: () => gitStore.loadGithub('repo') },
+              t('retryGithub'),
+            ),
           )
         : null,
       h('div', { className: 'gmg-hint' }, t('tokenScope')),

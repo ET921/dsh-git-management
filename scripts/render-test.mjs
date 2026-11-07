@@ -59,6 +59,15 @@ const STATUS = {
   conflicts: [],
 }
 
+/** What the host answers for `status`; a test swaps this to stage a conflict. */
+let statusPayload = STATUS
+
+/** The conflicted state: one file in both sides, so the panel must offer a way out. */
+const CONFLICTED = {
+  ...STATUS,
+  conflicts: [{ path: 'src/clash.ts', origPath: null, status: 'UU', kind: 'tracked', index: 'U', worktree: 'U', additions: 0, deletions: 0 }],
+}
+
 /**
  * The canned history: a two-lane shape, so the rail has a merge to draw.
  *
@@ -85,7 +94,7 @@ function respond(action, params) {
     case 'repos':
       return { repos: [{ id: 'w1', title: 'demo', path: 'C:/demo', isRepo: true, root: 'C:/demo', branch: 'main' }], defaultPath: 'C:/demo' }
     case 'status':
-      return STATUS
+      return statusPayload
     case 'log':
       return LOG
     case 'branches':
@@ -97,6 +106,11 @@ function respond(action, params) {
         ],
       }
     case 'diff':
+      // A conflicted file comes back as git's combined format, which the parser
+      // refuses to model; the panel must say so instead of drawing nonsense.
+      if (params?.file === 'src/clash.ts') {
+        return { file: 'src/clash.ts', staged: false, isBinary: false, patch: ['diff --cc src/clash.ts', 'index 1111111,2222222..0000000', '--- a/src/clash.ts', '+++ b/src/clash.ts', '@@@ -1,1 -1,1 +1,5 @@@', '++<<<<<<< HEAD', ' +ours', '++=======', '+ theirs', '++>>>>>>> side'].join('\n') }
+      }
       return {
         file: 'src/App.tsx',
         staged: true,
@@ -110,6 +124,7 @@ function respond(action, params) {
           ' import x',
           ' const a = 1',
           '-old',
+          '--a comment line that starts with two dashes',
           '+new',
           '+more',
           ' const b = 2',
@@ -352,6 +367,65 @@ check('github card names the remote', text().includes('acme/demo'), text().slice
 check('the github card lists the pulls tab', text().includes('拉取请求'), text().slice(-400))
 check('no error notice is shown', container.querySelector('.gmg-notice.is-error') === null, container.querySelector('.gmg-notice.is-error')?.textContent)
 
+// ---- feedback that survives the scroll, and a keyboard that shows ---------
+{
+  const injected = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
+  check('notices stay in view while the panel scrolls', /\.gmg-notice\.is-error[^{]*\{[^}]*position:\s*sticky/.test(injected), injected.slice(0, 60))
+  check('keyboard focus is visible on rows and buttons', /\.gmg-file:focus-visible/.test(injected) && /outline:\s*2px solid var\(--dsw-alias-brand-primary\)/.test(injected))
+}
+
+// ---- a file action re-reads only the status ------------------------------
+{
+  const before = calls.length
+  const stageButton = [...container.querySelectorAll('.gmg-file .gmg-actions button')].find((button) => button.getAttribute('aria-label') === '暂存')
+  check('an unstaged row offers a stage action', stageButton !== undefined, [...container.querySelectorAll('.gmg-file .gmg-actions button')].map((button) => button.getAttribute('aria-label')))
+  if (stageButton !== undefined) {
+    await act(async () => {
+      stageButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 30))
+    })
+    const after = calls.slice(before)
+    check('staging asks the host to stage the file', after.some((call) => call.action === 'stage'), after.map((call) => call.action))
+    check('staging does not re-read the whole panel', after.some((call) => call.action === 'status') && after.some((call) => call.action === 'log') === false, after.map((call) => call.action))
+  }
+}
+
+// ---- an in-progress merge -------------------------------------------------
+{
+  statusPayload = CONFLICTED
+  const refreshButton = container.querySelector('.gmg-icon-btn[aria-label="刷新"]')
+  check('the header offers a refresh', refreshButton !== null)
+  if (refreshButton !== null) {
+    await act(async () => {
+      refreshButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    })
+    const commitButton = container.querySelector('.gmg-commit .gmg-btn.is-primary')
+    check('a conflicted tree cannot be committed', commitButton !== null && commitButton.disabled === true, commitButton?.outerHTML?.slice(0, 120))
+    check('the reason is spelled out', text().includes('未解决的冲突'), text().slice(0, 900))
+    const resolveButton = [...container.querySelectorAll('.gmg-file .gmg-actions button')].find((button) => button.getAttribute('aria-label') === '标记为已解决')
+    check('a conflicted row can be marked resolved', resolveButton !== undefined, [...container.querySelectorAll('.gmg-file .gmg-actions button')].map((button) => button.getAttribute('aria-label')))
+    const abortButton = [...container.querySelectorAll('button')].find((button) => (button.textContent ?? '').includes('中止合并'))
+    check('the merge can be aborted from the panel', abortButton !== undefined, container.querySelector('.gmg-conflict')?.textContent)
+    if (abortButton !== undefined) {
+      const before = calls.length
+      dom.window.confirm = () => false
+      await act(async () => {
+        abortButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      check('declining the confirmation keeps the merge', calls.slice(before).some((call) => call.action === 'abortMerge') === false, calls.slice(before).map((call) => call.action))
+      dom.window.confirm = () => true
+      await act(async () => {
+        abortButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 30))
+      })
+      check('confirming the abort reaches the host', calls.slice(before).some((call) => call.action === 'abortMerge'), calls.slice(before).map((call) => call.action))
+    }
+  }
+  statusPayload = STATUS
+}
+
 // The worktree block: both checkouts, the main tag, and the dirty badge.
 check('worktree section renders', text().includes('工作樹'), text().slice(0, 900))
 check('the secondary worktree is listed', text().includes('worktree-fix-ui'), text().slice(0, 900))
@@ -406,6 +480,15 @@ if (fileRow !== null) {
     check('both gutters carry numbers', diffContainer.querySelectorAll('.gmg-diff-no').length >= 4)
     check('the whole file is drawn, not just the hunk', diffContainer.querySelectorAll('.gmg-diffrow').length >= 10, diffContainer.querySelectorAll('.gmg-diffrow').length)
 
+    // A removed line whose text starts with `--` prints as `--- ...` inside the
+    // hunk; treating that as a file header lost the line and shifted the rest.
+    const dashRow = [...diffContainer.querySelectorAll('.gmg-diffrow')].find((row) => (row.textContent ?? '').includes('a comment line that starts with two dashes'))
+    check('a content line that looks like a header is still content', dashRow?.classList.contains('is-del') === true, dashRow?.className)
+    check('the dasher keeps its gutter number', dashRow?.querySelector('.gmg-diff-no')?.textContent === '4', dashRow?.textContent)
+    const afterRow = [...diffContainer.querySelectorAll('.gmg-diffrow')].find((row) => (row.textContent ?? '').includes('const b = 2'))
+    const afterNumbers = [...(afterRow?.querySelectorAll('.gmg-diff-no') ?? [])].map((cell) => cell.textContent)
+    check('the lines after it keep their numbers', afterNumbers.length === 2 && afterNumbers[0] === '5' && afterNumbers[1] === '5', afterNumbers)
+
     // The split toggle re-pairs the same rows.
     const splitButton = [...diffContainer.querySelectorAll('button')].find((button) => /[并並]排|Split/.test(button.textContent ?? ''))
     if (splitButton !== undefined) {
@@ -436,6 +519,24 @@ if (fileRow !== null) {
       check('a split toggle exists', false, diffContainer.querySelector('.gmg-diffhead')?.textContent)
     }
 
+    // The review loop closes here: the file's own diff offers the same two
+    // actions the row does, without going back to the list first. A staged
+    // file has nothing to stage, so only the unstaged path shows that button.
+    const stageButton = [...diffContainer.querySelectorAll('.gmg-diffhead button')].find((button) => (button.textContent ?? '').trim().endsWith('暂存'))
+    const discardButton = [...diffContainer.querySelectorAll('.gmg-diffhead button')].find((button) => (button.textContent ?? '').includes('放弃更改'))
+    check('a staged diff offers no stage button', stageButton === undefined, diffContainer.querySelector('.gmg-diffhead')?.textContent)
+    check('the diff header offers discard', discardButton !== undefined, diffContainer.querySelector('.gmg-diffhead')?.textContent)
+    if (discardButton !== undefined) {
+      const before = calls.length
+      dom.window.confirm = () => false
+      await act(async () => {
+        discardButton.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      check('declining the discard leaves the file alone', calls.slice(before).some((call) => /discard|deleteUntracked/.test(call.action)) === false, calls.slice(before).map((call) => call.action))
+      dom.window.confirm = () => true
+    }
+
     // Closing goes through the tab's own action, so the strip drops the tab.
     const closeButton = [...diffContainer.querySelectorAll('button')].find((button) => (button.textContent ?? '').includes('返回'))
     if (closeButton !== undefined) {
@@ -451,6 +552,60 @@ if (fileRow !== null) {
       diffRoot.unmount()
     })
     diffContainer.remove()
+
+    // The worktree side of the same panel: an untracked file, which has its
+    // own pair of actions (stage, delete).
+    const worktreeContainer = document.createElement('div')
+    document.body.appendChild(worktreeContainer)
+    const worktreeRoot = createRoot(worktreeContainer)
+    await act(async () => {
+      worktreeRoot.render(
+        React.createElement(diffRegistration.component, {
+          ...diffRegistration.declaration.inject(),
+          actions: { close: () => {} },
+          useTabInfo: () => ({ tab: { id: 'tab-2', navigation: { params: { path: 'C:/demo', file: 'docs/read me.md', staged: false, status: 'U' }, revision: 2 } } }),
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    })
+    const worktreeStage = [...worktreeContainer.querySelectorAll('.gmg-diffhead button')].find((button) => (button.textContent ?? '').trim().endsWith('暂存'))
+    check('an unstaged diff offers stage', worktreeStage !== undefined, worktreeContainer.querySelector('.gmg-diffhead')?.textContent)
+    const worktreeDelete = [...worktreeContainer.querySelectorAll('.gmg-diffhead button')].find((button) => (button.textContent ?? '').includes('删除文件'))
+    check('an untracked diff offers delete, not discard', worktreeDelete !== undefined, worktreeContainer.querySelector('.gmg-diffhead')?.textContent)
+    if (worktreeStage !== undefined) {
+      const before = calls.length
+      await act(async () => {
+        worktreeStage.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }))
+        await new Promise((resolve) => setTimeout(resolve, 30))
+      })
+      check('staging from the diff reaches the host', calls.slice(before).some((call) => call.action === 'stage'), calls.slice(before).map((call) => call.action))
+    }
+    await act(async () => {
+      worktreeRoot.unmount()
+    })
+    worktreeContainer.remove()
+
+    // A conflicted file: git answers with a combined diff, and the panel says
+    // so rather than rendering two-column prefixes as if they were content.
+    const clashContainer = document.createElement('div')
+    document.body.appendChild(clashContainer)
+    const clashRoot = createRoot(clashContainer)
+    await act(async () => {
+      clashRoot.render(
+        React.createElement(diffRegistration.component, {
+          ...diffRegistration.declaration.inject(),
+          actions: { close: () => {} },
+          useTabInfo: () => ({ tab: { id: 'tab-3', navigation: { params: { path: 'C:/demo', file: 'src/clash.ts', staged: false, status: 'UU' }, revision: 3 } } }),
+        }),
+      )
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    })
+    check('a conflicted file explains itself instead of drawing garbage', (clashContainer.textContent ?? '').includes('冲突'), clashContainer.textContent?.slice(0, 200))
+    check('no combined-diff prefix reaches the body', clashContainer.querySelector('.gmg-diff-cell') === null, clashContainer.querySelector('.gmg-diffbody')?.textContent)
+    await act(async () => {
+      clashRoot.unmount()
+    })
+    clashContainer.remove()
   }
 } else {
   check('a file row exists to click', false)

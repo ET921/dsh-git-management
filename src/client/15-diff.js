@@ -91,9 +91,15 @@ function parsePatch(patch) {
   const rows = []
   let oldNo = 0
   let newNo = 0
+  // `--- ` / `+++ ` are file headers only before the first hunk. Inside a hunk
+  // they are ordinary content lines (a deletion of `-- foo` is printed as
+  // `--- foo`), and treating them as metadata loses a gutter number and shifts
+  // everything after it.
+  let seenHunk = false
   for (const line of String(patch ?? '').split('\n')) {
     if (line === '') continue
     if (line.startsWith('@@')) {
+      seenHunk = true
       const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
       if (match) {
         oldNo = Number(match[1])
@@ -102,7 +108,7 @@ function parsePatch(patch) {
       rows.push({ kind: DIFF_HUNK, text: line, oldNo: null, newNo: null })
       continue
     }
-    if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('new file') || line.startsWith('deleted file') || line.startsWith('similarity') || line.startsWith('rename ')) {
+    if (!seenHunk && (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('new file') || line.startsWith('deleted file') || line.startsWith('similarity') || line.startsWith('rename '))) {
       rows.push({ kind: DIFF_META, text: line, oldNo: null, newNo: null })
       continue
     }
@@ -212,6 +218,13 @@ async function openDiff(input) {
     // reported as a binary file.
     if (/^Binary files .* differ$/m.test(patch) || /^GIT binary patch$/m.test(patch)) {
       setDiffState({ loading: false, note: 'binary' })
+      return
+    }
+    // A conflicted file comes back as a combined diff (`diff --cc` / `diff
+    // --combined`), whose two-column prefixes this parser deliberately does not
+    // model; say so instead of drawing wrong line numbers.
+    if (/^diff --(?:cc|combined) /m.test(patch)) {
+      setDiffState({ loading: false, note: 'unmerged' })
       return
     }
     if (patch.trim() === '') {

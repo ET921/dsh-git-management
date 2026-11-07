@@ -220,6 +220,23 @@ console.log('\n# git engine against a real repository')
     await git.unstage(dir, ['marker.txt'])
     await rm(join(dir, 'marker.txt'), { force: true })
 
+    // `git add -- <path>` still treats the argument as a pathspec, so a name
+    // containing `[` used to stage whichever sibling matched the glob. Two
+    // files where one name is also a pattern for the other is the whole test.
+    await writeFile(join(dir, 'bracket.txt'), 'plain\n')
+    await writeFile(join(dir, 'b[br]acket.txt'), 'weird\n')
+    await git.stage(dir, ['b[br]acket.txt'])
+    const stagedFiles = String((await exec(dir, ['diff', '--cached', '--name-only'])).stdout).trim().split(/\r?\n/).filter((name) => name !== '')
+    check('staging a bracketed name stages only that file', stagedFiles.length === 1 && stagedFiles[0] === 'b[br]acket.txt', stagedFiles)
+    check('the sibling the glob would match stays out', stagedFiles.includes('bracket.txt') === false, stagedFiles)
+    equal('isTracked resolves the literal name', await git.isTracked(dir, 'b[br]acket.txt'), true)
+    await git.unstage(dir, ['b[br]acket.txt'])
+    const bracketPatch = await git.diff(dir, 'b[br]acket.txt', false)
+    check('diff reads the bracketed file, not its sibling', bracketPatch.patch.includes('+weird'), bracketPatch.patch.slice(0, 200))
+    await git.removeUntracked(dir, ['b[br]acket.txt'])
+    check('removeUntracked deletes only the named file', existsSync(join(dir, 'b[br]acket.txt')) === false && existsSync(join(dir, 'bracket.txt')) === true)
+    await rm(join(dir, 'bracket.txt'), { force: true })
+
     await git.stage(dir, ['README.md'])
     const stagedPatch = await git.stagedPatch(dir)
     check('staged patch mentions the added line', stagedPatch.includes('+more'))
@@ -378,10 +395,155 @@ console.log('\n# git engine against a real repository')
   }
 }
 
-if (outputDir !== '') await rm(outputDir, { recursive: true, force: true })
+console.log('\n# edge states (own fixtures)')
+{
+  const edge = await mkdtemp(join(tmpdir(), 'dsh-git-edge-'))
+  const bare = join(edge, 'bare.git')
+  const work = join(edge, 'work')
+  try {
+    // A bare repository has no worktree, so `rev-parse --show-toplevel` fails
+    // outright; the probe used to read that failure as "not a repository".
+    await exec(edge, ['init', '--bare', '--quiet', bare])
+    const bareProbe = await git.probe(bare)
+    check('a bare repository is still recognised', bareProbe.isRepo === true && bareProbe.bare === true, bareProbe)
+
+    await exec(edge, ['init', '--quiet', '-b', 'main', work])
+    await exec(work, ['config', 'user.email', 'dev@example.com'])
+    await exec(work, ['config', 'user.name', 'Dev'])
+    await exec(work, ['config', 'commit.gpgsign', 'false'])
+    await writeFile(join(work, 'a.txt'), 'one\n')
+    await exec(work, ['add', '-A'])
+    await exec(work, ['commit', '--quiet', '-m', 'base'])
+
+    // A detached HEAD has no branch name; `push` must refuse rather than build
+    // `--set-upstream origin null`.
+    const baseSha = String((await exec(work, ['rev-parse', 'HEAD'])).stdout).trim()
+    await exec(work, ['checkout', '--quiet', baseSha])
+    const detached = await git.status(work)
+    const pushError = await git.push(work, detached.branch, detached.upstream).then(
+      () => null,
+      (thrown) => thrown,
+    )
+    check('push from a detached HEAD is refused', pushError?.name === 'GitError', pushError?.message)
+    check('the refusal names the way out', /detached/i.test(String(pushError?.message ?? '')), pushError?.message)
+    await exec(work, ['checkout', '--quiet', 'main'])
+
+    // A merge commit has no diff of its own; `git show --numstat` printed
+    // nothing, so the hover card claimed "0 files, +0 -0".
+    await exec(work, ['checkout', '--quiet', '-b', 'side'])
+    await writeFile(join(work, 'side.txt'), 'side\n')
+    await exec(work, ['add', '-A'])
+    await exec(work, ['commit', '--quiet', '-m', 'side work'])
+    await exec(work, ['checkout', '--quiet', 'main'])
+    await writeFile(join(work, 'main.txt'), 'main\n')
+    await exec(work, ['add', '-A'])
+    await exec(work, ['commit', '--quiet', '-m', 'main work'])
+    await exec(work, ['merge', '--no-ff', '--no-edit', '--quiet', 'side'])
+    const mergeDetail = await git.commitDetail(work, 'HEAD')
+    check('a merge commit reports the files it brought in', mergeDetail.files > 0, mergeDetail)
+    check('a merge commit reports its line counts', mergeDetail.additions > 0, mergeDetail)
+
+    // Conflicted merge: `abortMerge` is the panel's only way out.
+    await writeFile(join(work, 'clash.txt'), 'base\n')
+    await exec(work, ['add', '-A'])
+    await exec(work, ['commit', '--quiet', '-m', 'clash base'])
+    await exec(work, ['checkout', '--quiet', '-b', 'clash-side'])
+    await writeFile(join(work, 'clash.txt'), 'theirs\n')
+    await exec(work, ['commit', '--quiet', '-am', 'theirs'])
+    await exec(work, ['checkout', '--quiet', 'main'])
+    await writeFile(join(work, 'clash.txt'), 'ours\n')
+    await exec(work, ['commit', '--quiet', '-am', 'ours'])
+    await exec(work, ['merge', 'clash-side'])
+    const conflicted = await git.status(work)
+    check('the fixture is really in conflict', conflicted.conflicts.length > 0, conflicted.conflicts)
+    const aborted = await git.abortMerge(work)
+    check('abortMerge reports back', typeof aborted.summary === 'string', aborted)
+    const clean = await git.status(work)
+    check('the merge is gone after aborting', clean.conflicts.length === 0, clean.conflicts)
+    check('aborting restored the branch', clean.branch === 'main', clean.branch)
+
+    // Branch names may contain `|` on the platforms that allow the byte, and
+    // that character used to be the field separator.
+    const piped = await exec(work, ['branch', 'a|b'])
+    const listed = await git.branches(work)
+    check('the branch list survives a pipe in a name', listed.branches.every((row) => typeof row.name === 'string' && row.name !== ''), listed.branches)
+    if (piped.code === 0) {
+      check('a piped branch name reaches the panel intact', listed.branches.some((row) => row.name === 'a|b'), listed.branches.map((row) => row.name))
+    }
+    const detailPiped = await git.branchDetail(work, listed.branches[0].name)
+    check('branchDetail parses without the pipe separator', detailPiped.exists === true && detailPiped.branch === listed.branches[0].name, detailPiped)
+  } finally {
+    await rm(edge, { recursive: true, force: true })
+  }
+}
+
+console.log('\n# http route guards')
+{
+  const { apply } = await import('../src/index.js')
+  const { mkdtemp: mkTmp } = await import('node:fs/promises')
+  const inside = await mkTmp(join(tmpdir(), 'dsh-git-inside-'))
+  const outside = await mkTmp(join(tmpdir(), 'dsh-git-outside-'))
+  const sibling = `${inside}-evil`
+  await mkdir(sibling, { recursive: true })
+  await mkdir(join(inside, 'nested'), { recursive: true })
+  let handler = null
+  const fakeRes = () => {
+    const answer = { status: 0, body: '' }
+    return {
+      answer,
+      writeHead(status) {
+        answer.status = status
+      },
+      end(body) {
+        answer.body = String(body ?? '')
+      },
+    }
+  }
+  const call = async (options) => {
+    const chunks = options.body === undefined ? [] : [Buffer.from(JSON.stringify(options.body))]
+    const req = {
+      method: options.method ?? 'POST',
+      headers: { host: '127.0.0.1:43129', ...(options.headers ?? {}) },
+      async *[Symbol.asyncIterator]() {
+        for (const chunk of chunks) yield chunk
+      },
+    }
+    const res = fakeRes()
+    await handler(req, res)
+    return res.answer
+  }
+  const fakeCtx = {
+    get: (key) => (key === 'workspaceRegistry' ? { list: () => [{ id: 'w1', title: 'inside', path: inside }] } : undefined),
+    inject: (deps, callback) => callback({ webServer: { register: (declaration) => (handler = declaration.handler, () => {}) }, subprocess: { spawn: () => ({ done: Promise.resolve({ exitCode: 1 }), collected: { stdout: null, stderr: null } }) } }),
+    effect: (fn) => fn(),
+  }
+  try {
+    apply(fakeCtx)
+    check('the route registered a handler', typeof handler === 'function')
+    const ok = await call({ body: { action: 'repos', params: {} }, headers: { 'content-type': 'application/json' } })
+    check('a JSON request from the panel is served', ok.status === 200, ok)
+    const plain = await call({ body: { action: 'repos', params: {} }, headers: { 'content-type': 'text/plain' } })
+    check('a text/plain body is refused (forces a preflight)', plain.status === 415, plain)
+    const noType = await call({ body: { action: 'repos', params: {} } })
+    check('a body with no content-type is refused', noType.status === 415, noType)
+    const crossPath = await call({ body: { action: 'status', params: { path: outside } }, headers: { 'content-type': 'application/json' } })
+    check('a path outside the registered workspaces is refused', crossPath.status === 403, crossPath)
+    const siblingPath = await call({ body: { action: 'repos', params: { path: sibling } }, headers: { 'content-type': 'application/json' } })
+    check('a prefix that is not a subdirectory is refused', siblingPath.status === 403, siblingPath)
+    const insideCall = await call({ body: { action: 'repos', params: { path: join(inside, 'nested') } }, headers: { 'content-type': 'application/json' } })
+    check('the registered workspace itself is allowed', insideCall.status === 200, insideCall.status)
+  } finally {
+    await rm(inside, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+    await rm(sibling, { recursive: true, force: true })
+  }
+}
 
 console.log('\n# packaging')
 {
+  // Every git call above parked its streams here; nothing may touch it before
+  // the last one has finished.
+  if (outputDir !== '') await rm(outputDir, { recursive: true, force: true })
   const root = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
   check('host half present after build', existsSync(join(root, 'lib', 'index.js')))
   check('client bundle present after build', existsSync(join(root, 'lib', 'client.js')))

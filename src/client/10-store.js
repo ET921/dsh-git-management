@@ -16,6 +16,8 @@ function initialState() {
   return {
     /** True once the workspace list has been read at least once. */
     ready: false,
+    /** True when the last workspace read failed (the panel offers a retry). */
+    loadFailed: false,
     /** Repository directory under inspection. */
     path: null,
     /** Workspace rows from the host: `{ id, title, path, isRepo, branch }`. */
@@ -63,6 +65,8 @@ function createGitStore() {
   const listeners = new Set()
   /** Bumped on every repository switch so a slow answer cannot land on the new one. */
   let epoch = 0
+  /** Bumped on every operation so only the newest one may clear `busy`. */
+  let taskSeq = 0
 
   const get = () => state
 
@@ -87,25 +91,39 @@ function createGitStore() {
 
   /**
    * Run one operation with the busy flag, capturing failures into `error`.
+   *
+   * `busy` is token-guarded rather than a single label: when a poll and a
+   * button overlap, only the newest operation may clear it, so the earlier
+   * spinner cannot make the panel look idle while git is still working.
+   *
    * @param label - shown while the operation runs.
    * @param operation - the work.
+   * @param options - `{ keepError, guard }`: leave an existing error in place,
+   *   and only record a failure while the guard returns true.
    * @returns the operation's result, or undefined after a failure.
    */
-  async function task(label, operation) {
-    set({ busy: label, error: null })
+  async function task(label, operation, options = {}) {
+    const token = (taskSeq += 1)
+    set(options.keepError === true ? { busy: label } : { busy: label, error: null })
     try {
       return await operation()
     } catch (error) {
-      set({ error: String(error?.message ?? error) })
+      if (typeof options.guard !== 'function' || options.guard()) {
+        set({ error: String(error?.message ?? error) })
+      }
       return undefined
     } finally {
-      set({ busy: null })
+      if (token === taskSeq) set({ busy: null })
     }
   }
 
   /** Read the workspace list and settle on a repository. */
   async function loadRepos() {
-    const listed = await callHost('repos', {})
+    const listed = await task('repos', () => callHost('repos', {}))
+    if (listed === undefined) {
+      set({ ready: true, loadFailed: true })
+      return
+    }
     const repos = Array.isArray(listed?.repos) ? listed.repos : []
     const stored = readStoredRepo()
     const preferred =
@@ -113,7 +131,7 @@ function createGitStore() {
       repos.find((repo) => repo.isRepo) ??
       repos.find((repo) => repo.path === stored) ??
       null
-    set({ ready: true, repos })
+    set({ ready: true, loadFailed: false, repos })
     if (preferred !== null && state.path === null) await selectRepo(preferred.path)
   }
 
@@ -137,6 +155,7 @@ function createGitStore() {
       error: null,
       notice: null,
     })
+    setDiffState({ target: null, rows: [], pairs: [] })
     await refresh(mine)
     if (mine === epoch) await loadWorktrees()
   }
@@ -154,16 +173,39 @@ function createGitStore() {
     const path = state.path
     if (path === null) return
     const mine = only ?? epoch
-    const snapshot = await task('refresh', async () => {
-      const [status, log, branches] = await Promise.all([
-        callHost('status', { path }),
-        callHost('log', { path, limit: 40 }),
-        callHost('branches', { path }).catch(() => null),
-      ])
-      return { status, log: log?.commits ?? [], branches }
-    })
+    const snapshot = await task(
+      'refresh',
+      async () => {
+        const [status, log, branches] = await Promise.all([
+          callHost('status', { path }),
+          callHost('log', { path, limit: 40 }),
+          callHost('branches', { path }).catch(() => null),
+        ])
+        return { status, log: log?.commits ?? [], branches }
+      },
+      { keepError: true, guard: () => mine === epoch },
+    )
     if (snapshot === undefined || mine !== epoch) return
     set({ status: snapshot.status, log: snapshot.log, branches: snapshot.branches })
+  }
+
+  /**
+   * Re-read only the status, leaving history and the branch list alone.
+   *
+   * File operations and the 8-second poll use this: `status` is the only thing
+   * that can change from a stage/discard, and re-reading `log` plus `branches`
+   * on every click is what made the panel feel locked.
+   */
+  async function refreshStatus() {
+    const path = state.path
+    if (path === null) return
+    const mine = epoch
+    const status = await task('refresh', () => callHost('status', { path }), {
+      keepError: true,
+      guard: () => mine === epoch,
+    })
+    if (status === undefined || mine !== epoch) return
+    set({ status })
   }
 
   /**
@@ -268,11 +310,12 @@ function createGitStore() {
    * @param notice - the line shown on success.
    */
   async function fileAction(action, files, notice) {
-    if (state.path === null || files.length === 0) return
+    if (state.path === null || files.length === 0) return false
     const done = await task(action, () => callHost(action, { path: state.path, files }))
-    if (done === undefined) return
+    if (done === undefined) return false
     set({ notice })
-    await refresh()
+    await refreshStatus()
+    return true
   }
 
   /** Stage every change. */
@@ -302,7 +345,7 @@ function createGitStore() {
       callHost('commit', { path: state.path, message, amend: state.amend, stageAll: state.stageAll }),
     )
     if (done === undefined) return false
-    set({ message: '', amend: false, notice: done.summary || 'committed' })
+    set({ message: '', amend: false, stageAll: false, notice: done.summary || 'committed' })
     await refresh()
     return true
   }
@@ -345,6 +388,15 @@ function createGitStore() {
     await refresh()
   }
 
+  /** Abort an in-progress merge (`git merge --abort`). */
+  async function abortMerge() {
+    if (state.path === null) return
+    const done = await task('abortMerge', () => callHost('abortMerge', { path: state.path }))
+    if (done === undefined) return
+    set({ notice: done.summary || 'merge aborted' })
+    await refresh()
+  }
+
   /** `git init` in the selected directory, then reload it. */
   async function initRepo() {
     if (state.path === null) return
@@ -361,7 +413,20 @@ function createGitStore() {
   async function loadGithub(kind) {
     if (state.path === null) return
     const result = await task(`github:${kind}`, () => callHost('github', { path: state.path, action: kind }))
-    if (result === undefined) return
+    if (result === undefined) {
+      // Keep the failure on the card instead of leaving it stuck on "reading…":
+      // `authorized: false` + `reason: 'error'` makes the retry row render.
+      set({
+        github: {
+          ...(state.github ?? {}),
+          connected: true,
+          authorized: false,
+          reason: 'error',
+          error: state.error,
+        },
+      })
+      return
+    }
     set({
       github: {
         ...(state.github ?? {}),
@@ -406,6 +471,7 @@ function createGitStore() {
     loadRepos,
     selectRepo,
     refresh,
+    refreshStatus,
     refreshAll,
     loadWorktrees,
     createWorktree,
@@ -420,6 +486,7 @@ function createGitStore() {
     createBranch,
     switchBranch,
     remote,
+    abortMerge,
     initRepo,
     loadGithub,
     createPull,

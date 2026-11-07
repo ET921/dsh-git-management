@@ -125,6 +125,63 @@ async function requireDirectory(path) {
 }
 
 /**
+ * One comparable form of a path: forward slashes, no trailing slash, folded
+ * case — the same rule the panel uses to decide which worktree it is on.
+ * @param path - the raw path.
+ * @returns the comparable key.
+ */
+function pathKey(path) {
+  return String(path ?? '')
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+}
+
+/**
+ * Whether a request body may be parsed as JSON.
+ *
+ * Requiring `application/json` is what forces a CORS preflight: the other
+ * content types a browser will send without one (`text/plain`, form encodings)
+ * are refused here, so a page on another origin cannot post a body that this
+ * route would act on. It is deliberately narrower than an Origin check, whose
+ * behaviour differs between hosts.
+ *
+ * @param req - the incoming request.
+ * @returns true when the body may be read.
+ */
+function isJsonRequest(req) {
+  const type = req.headers['content-type']
+  if (typeof type !== 'string' || type.trim() === '') return false
+  return type.split(';')[0].trim().toLowerCase() === 'application/json'
+}
+
+/**
+ * Confirm a path belongs to a registered workspace.
+ *
+ * Every action that takes a `path` ends up running git in that directory, and
+ * several of them write (`discard`, `clean -f`, `commit`). Without this the
+ * route would drive any repository on the disk for anyone who can reach it.
+ * A host that publishes no workspace list (or none yet) keeps the old
+ * behaviour rather than locking the panel out of a directory it cannot see.
+ *
+ * @param path - the repository directory from the request.
+ * @param workspaces - the registered workspaces, `[{ path }]`.
+ * @returns the path, unchanged.
+ */
+function requireWorkspace(path, workspaces) {
+  const roots = (workspaces ?? []).map((workspace) => pathKey(workspace.path)).filter((root) => root !== '')
+  if (roots.length === 0) return path
+  const candidate = pathKey(path)
+  const inside = roots.some((root) => candidate === root || candidate.startsWith(`${root}/`))
+  if (inside === false) {
+    const error = new Error(`path is outside the registered workspaces: ${path}`)
+    error.status = 403
+    throw error
+  }
+  return path
+}
+
+/**
  * Refuse a request the host's own connection gate rejects.
  *
  * A route registered on `webServer` sits outside the `/api` prefix the core
@@ -239,10 +296,17 @@ export function apply(ctx) {
               return
             }
             try {
+              if (isJsonRequest(req) === false) {
+                sendJson(res, 415, { ok: false, error: 'content-type must be application/json' })
+                return
+              }
               const body = await readJson(req)
               const action = String(body.action ?? '')
               const params = body.params ?? {}
-              if (typeof params.path === 'string') await requireDirectory(params.path)
+              if (typeof params.path === 'string') {
+                await requireDirectory(params.path)
+                requireWorkspace(params.path, workspaceList())
+              }
               const result = await actions.handle(action, {
                 ...params,
                 token: typeof body.token === 'string' ? body.token : params.token,

@@ -150,6 +150,22 @@ function DiffPanel(props) {
   const additions = state.rows.filter((row) => row.kind === DIFF_ADD).length
   const deletions = state.rows.filter((row) => row.kind === DIFF_DEL).length
   const otherSide = siblings.some((entry) => entry.row.path === target.file && entry.staged !== target.staged)
+  const current = siblings.find((entry) => entry.row.path === target.file && entry.staged === target.staged)
+  const untracked = current?.row.kind === 'untracked'
+  const close = () => (props.onClose ?? closeDiff)()
+  const stageHere = () => {
+    gitStore.fileAction('stage', [target.file], null).then(() => {
+      openDiff({ ...target, staged: true })
+    })
+  }
+  const discardHere = () => {
+    const message = untracked ? t('deleteConfirm', { file: target.file }) : t('discardConfirm', { file: target.file })
+    if (!window.confirm(message)) return
+    const notice = untracked ? t('deleted') : t('discarded')
+    gitStore.fileAction(untracked ? 'deleteUntracked' : 'discard', [target.file], notice).then((ok) => {
+      if (ok) close()
+    })
+  }
 
   const header = h(
     'div',
@@ -165,6 +181,32 @@ function DiffPanel(props) {
     h('span', { className: 'gmg-gh-label' }, target.staged ? t('diffStagedBadge') : t('diffWorktreeBadge')),
     h('span', { className: 'gmg-add-count gmg-stats' }, `+${additions}`),
     h('span', { className: 'gmg-del-count gmg-stats' }, `-${deletions}`),
+    target.staged
+      ? null
+      : h(
+          'button',
+          {
+            className: 'gmg-btn',
+            type: 'button',
+            disabled: panel.busy !== null,
+            onClick: stageHere,
+            title: t('stage'),
+          },
+          h(IconPlus, { size: 12 }),
+          t('stage'),
+        ),
+    h(
+      'button',
+      {
+        className: 'gmg-btn is-danger',
+        type: 'button',
+        disabled: panel.busy !== null,
+        onClick: discardHere,
+        title: untracked ? t('delete') : t('discard'),
+      },
+      h(IconUndo, { size: 12 }),
+      untracked ? t('delete') : t('discard'),
+    ),
     h('span', { className: 'gmg-spacer' }),
     otherSide
       ? h(
@@ -214,6 +256,7 @@ function DiffPanel(props) {
   if (state.loading) body = h('div', { className: 'gmg-empty' }, t('loadingDiff'))
   else if (state.error !== null) body = h('div', { className: 'gmg-empty' }, state.error)
   else if (state.note === 'binary') body = h('div', { className: 'gmg-empty' }, t('binaryDiff'))
+  else if (state.note === 'unmerged') body = h('div', { className: 'gmg-empty' }, t('diffUnmerged'))
   else if (state.note === 'empty') body = h('div', { className: 'gmg-empty' }, t('emptyDiff'))
   else if (state.rows.length === 0) body = h('div', { className: 'gmg-empty' }, t('emptyDiff'))
   else body = state.mode === 'unified' ? h(UnifiedDiff, { rows: state.rows }) : h(SplitDiff, { pairs: state.pairs })

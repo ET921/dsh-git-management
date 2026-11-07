@@ -267,6 +267,13 @@ const PANEL_CSS = `
 }
 .gmg-notice.is-error { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent); color: var(--dsw-alias-state-error-primary); }
 .gmg-notice.is-ok { color: var(--dsw-alias-state-success-primary); }
+/* Both notice kinds carry a dismiss button: keep them in view while the page
+   scrolls, because an error the user has scrolled past reads as no response. */
+.gmg-notice.is-error, .gmg-notice.is-ok { position: sticky; top: 8px; z-index: 5; }
+.gmg-icon-btn:focus-visible,
+.gmg-file:focus-visible,
+.gmg-branchitem:focus-visible,
+.gmg-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
 .gmg-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .gmg-empty { padding: 14px 12px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .gmg-gh { display: flex; flex-direction: column; }
