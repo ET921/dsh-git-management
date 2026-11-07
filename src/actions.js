@@ -12,10 +12,40 @@
  * @module dsh-git-management/src/actions
  */
 
-/** GitHub's REST API root; `GITHUB_API_URL` (GHES) overrides it. */
-function apiBase() {
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
+import { normalizePath } from './git.js'
+
+/** Where DSH's own worktree tool puts a checkout, relative to the repository root. */
+const WORKTREE_DIR = '.agents/worktrees'
+
+/** How many checkouts get a dirty count on one read (the rest show `—`). */
+const MAX_DIRTY_SCAN = 8
+
+/** How many dirty scans may be in flight at once. */
+const DIRTY_CONCURRENCY = 4
+
+/** A worktree name is a single path segment, never a traversal. */
+const WORKTREE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+/**
+ * GitHub's REST API root for one remote.
+ *
+ * `GITHUB_API_URL` wins, because a GHES operator may serve the API on a
+ * different path. Without it, a remote whose host is not github.com is a
+ * GitHub Enterprise install, whose REST API lives under `/api/v3` — assuming
+ * api.github.com there produced "Not Found" for every call.
+ *
+ * @param host - the remote's host, or null when the remote is not a URL.
+ * @returns the base URL, without a trailing slash.
+ */
+function apiBase(host) {
   const configured = process.env.GITHUB_API_URL
-  return typeof configured === 'string' && configured !== '' ? configured.replace(/\/+$/, '') : 'https://api.github.com'
+  if (typeof configured === 'string' && configured.trim() !== '') return configured.trim().replace(/\/+$/, '')
+  const bare = typeof host === 'string' ? host.trim().toLowerCase() : ''
+  if (bare !== '' && bare !== 'github.com' && bare !== 'www.github.com') return `https://${bare}/api/v3`
+  return 'https://api.github.com'
 }
 
 /**
@@ -23,10 +53,11 @@ function apiBase() {
  * @param token - bearer token.
  * @param path - API path beginning with `/`.
  * @param init - fetch init overrides.
+ * @param host - the remote's host, so a GHES install reaches its own API.
  * @returns parsed JSON body.
  */
-async function github(token, path, init = {}) {
-  const response = await fetch(`${apiBase()}${path}`, {
+async function github(token, path, init = {}, host = null) {
+  const response = await fetch(`${apiBase(host)}${path}`, {
     ...init,
     headers: {
       accept: 'application/vnd.github+json',
@@ -63,6 +94,47 @@ function resolveToken(supplied) {
   if (typeof supplied === 'string' && supplied.trim() !== '') return supplied.trim()
   const ambient = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
   return typeof ambient === 'string' && ambient.trim() !== '' ? ambient.trim() : null
+}
+
+/** GitHub logins already resolved from an author email, keyed by lower-case address. */
+const emailLogins = new Map()
+
+/**
+ * The GitHub account behind one author email.
+ *
+ * The commit endpoint cannot answer for a sha that has not been pushed yet,
+ * but the address can: this checkout's own `user.email` maps to the account
+ * behind the token, and GitHub's commit search names whoever has pushed with
+ * any other address. A commit's email is written at commit time, so the card
+ * has an account to show straight away instead of waiting for a push.
+ *
+ * A lookup that fails is not an error: the card falls back to git's name, and
+ * nothing is cached for that address so the next hover retries.
+ *
+ * @param token - bearer token.
+ * @param email - the commit's author email.
+ * @param own - whether that address is this checkout's `user.email`.
+ * @param host - the remote's host, for a GHES install.
+ * @returns the login, or null when no account matches.
+ */
+async function loginForEmail(token, email, own, host = null) {
+  const key = String(email ?? '').trim().toLowerCase()
+  if (key === '') return null
+  if (emailLogins.has(key)) return emailLogins.get(key)
+  let login = null
+  try {
+    if (own) {
+      const viewer = await github(token, '/user', {}, host)
+      login = viewer?.login ?? null
+    } else {
+      const found = await github(token, `/search/commits?q=${encodeURIComponent(`author-email:${key}`)}&per_page=1`, {}, host)
+      login = found?.items?.[0]?.author?.login ?? null
+    }
+  } catch {
+    login = null
+  }
+  if (login !== null) emailLogins.set(key, login)
+  return login
 }
 
 /**
@@ -108,6 +180,96 @@ export function createActions({ git, workspaces }) {
   }
 
   /**
+   * Every checkout of the repository, with a bounded dirty count per row.
+   *
+   * The dirty scan is a separate `git status` per worktree, so it is capped:
+   * eight rows, four at a time. Rows past the cap still render, with `dirty:
+   * null`, which the panel shows as "—" rather than a wrong zero.
+   *
+   * @param path - any directory inside the repository.
+   * @returns `{ isRepo, root, rootKey, worktrees, truncated }`.
+   */
+  async function worktrees(path) {
+    const listing = await git.worktrees(path)
+    if (!listing.isRepo) return { isRepo: false, root: null, rootKey: null, worktrees: [], truncated: false }
+    const rows = listing.worktrees.map((row) => ({ ...row, dirty: null, dirtyKnown: false }))
+    const scanned = rows.slice(0, MAX_DIRTY_SCAN)
+    for (let index = 0; index < scanned.length; index += DIRTY_CONCURRENCY) {
+      const batch = scanned.slice(index, index + DIRTY_CONCURRENCY)
+      const counts = await Promise.all(batch.map((row) => git.dirtyCount(row.path).catch(() => null)))
+      batch.forEach((row, offset) => {
+        row.dirty = counts[offset]
+        row.dirtyKnown = counts[offset] !== null
+      })
+    }
+    return {
+      isRepo: true,
+      root: listing.root,
+      rootKey: listing.rootKey,
+      worktrees: rows,
+      truncated: rows.length > scanned.length,
+    }
+  }
+
+  /**
+   * Create a worktree on a new branch, under the same layout DSH's own tool uses.
+   * @param path - any directory inside the repository.
+   * @param name - the worktree's name, one path segment.
+   * @returns `{ path, branch, worktrees }`.
+   */
+  async function createWorktree(path, name) {
+    const requested = String(name ?? '').trim()
+    if (!WORKTREE_NAME.test(requested)) {
+      throw new Error('名稱只能含英數、點、底線、連字號（1–64 字元） / name must be 1–64 of A-Z a-z 0-9 . _ -')
+    }
+    const listing = await git.worktrees(path)
+    if (!listing.isRepo) throw new Error('not a git repository')
+    const root = String(listing.root).replace(/\\/g, '/')
+    const parent = `${root}/${WORKTREE_DIR}`
+    const destination = `${parent}/${requested}`
+    const branch = `worktree-${requested}`
+    await mkdir(parent, { recursive: true })
+    // A self-ignoring directory, exactly like DSH's own worktree tool, so the
+    // checkouts never surface as untracked files in the main working tree.
+    await writeFile(join(parent, '.gitignore'), '*\n', { flag: 'wx' }).catch(() => {})
+    const created = await git.addWorktree(listing.root, { path: destination, branch })
+    const refreshed = await worktrees(path)
+    return { ...created, worktrees: refreshed.worktrees }
+  }
+
+  /**
+   * Remove one worktree directory, refusing the main one and the one in use.
+   * @param path - any directory inside the repository.
+   * @param target - the worktree to remove.
+   * @returns `{ summary, worktrees }`.
+   */
+  async function removeWorktree(path, target) {
+    const listing = await git.worktrees(path)
+    if (!listing.isRepo) throw new Error('not a git repository')
+    const key = normalizePath(target)
+    const row = listing.worktrees.find((entry) => entry.key === key)
+    if (row === undefined) throw new Error('該路徑不是這個 repo 的工作樹 / not a worktree of this repository')
+    if (row.main === true) throw new Error('不能移除主工作樹 / the main working tree cannot be removed')
+    if (row.key === normalizePath(path)) throw new Error('面板目前就在這個工作樹裡，先切換再移除 / the panel is using this worktree')
+    const removed = await git.removeWorktree(listing.root, row.path)
+    const refreshed = await worktrees(path)
+    return { ...removed, worktrees: refreshed.worktrees }
+  }
+
+  /**
+   * Drop records whose directory is gone.
+   * @param path - any directory inside the repository.
+   * @returns `{ summary, worktrees }`.
+   */
+  async function pruneWorktrees(path) {
+    const listing = await git.worktrees(path)
+    if (!listing.isRepo) throw new Error('not a git repository')
+    const pruned = await git.pruneWorktrees(listing.root)
+    const refreshed = await worktrees(path)
+    return { ...pruned, worktrees: refreshed.worktrees }
+  }
+
+  /**
    * Dispatch one named action.
    * @param action - the action name.
    * @param params - action arguments.
@@ -118,10 +280,18 @@ export function createActions({ git, workspaces }) {
     switch (action) {
       case 'repos':
         return repos()
+      case 'worktrees':
+        return worktrees(path)
+      case 'createWorktree':
+        return createWorktree(path, params.name)
+      case 'removeWorktree':
+        return removeWorktree(path, String(params.target ?? ''))
+      case 'pruneWorktrees':
+        return pruneWorktrees(path)
       case 'status':
         return git.status(path)
       case 'diff':
-        return git.diff(path, String(params.file ?? ''), Boolean(params.staged))
+        return git.diff(path, String(params.file ?? ''), Boolean(params.staged), params.context === 'full' ? 'full' : 'hunks')
       case 'stagedPatch':
         return { patch: await git.stagedPatch(path) }
       case 'stage':
@@ -140,6 +310,12 @@ export function createActions({ git, workspaces }) {
         })
       case 'log':
         return { commits: await git.log(path, Number(params.limit ?? 30)) }
+      case 'commitDetail':
+        return git.commitDetail(path, String(params.sha ?? 'HEAD'))
+      case 'commitDiff':
+        return git.commitDiff(path, String(params.sha ?? ''))
+      case 'branchDetail':
+        return git.branchDetail(path, String(params.branch ?? ''))
       case 'branches':
         return git.branches(path)
       case 'switch':
@@ -152,6 +328,8 @@ export function createActions({ git, workspaces }) {
         const snapshot = await git.status(path)
         return git.push(path, snapshot.branch, snapshot.upstream)
       }
+      case 'abortMerge':
+        return git.abortMerge(path)
       case 'init':
         return git.init(path)
       case 'github':
@@ -193,7 +371,7 @@ export function createActions({ git, workspaces }) {
     if (token === null) return { connected: true, remote, authorized: false, reason: 'no-token' }
 
     if (request === 'repo') {
-      const info = await github(token, `/repos/${remote.slug}`)
+      const info = await github(token, `/repos/${remote.slug}`, {}, remote.host)
       return {
         connected: true,
         authorized: true,
@@ -212,10 +390,54 @@ export function createActions({ git, workspaces }) {
         },
       }
     }
+    if (request === 'commit') {
+      const sha = String(params.sha ?? '').trim()
+      if (sha === '') throw new Error('sha is required')
+      let info = null
+      try {
+        info = await github(token, `/repos/${remote.slug}/commits/${sha}`, {}, remote.host)
+      } catch (error) {
+        // 404 is the normal case for a commit that is still local: it also
+        // needs a name, and its email is enough to find one.
+        if (error?.status !== 404) throw error
+      }
+      let login = info?.author?.login ?? null
+      if (login === null) {
+        // Not on GitHub yet, or the address is not linked to the account that
+        // committed: resolve the account from the commit's own email instead
+        // of waiting for a push.
+        const author = await git.commitAuthor(path, sha)
+        const email = author?.email ?? ''
+        const own = email !== '' && email.toLowerCase() === String((await git.userEmail(path)) ?? '').toLowerCase()
+        login = await loginForEmail(token, email, own, remote?.host ?? null)
+      }
+      if (info === null) {
+        return {
+          connected: true,
+          authorized: true,
+          remote,
+          local: true,
+          commit: login === null ? null : { sha, login, name: login, avatarUrl: null },
+        }
+      }
+      return {
+        connected: true,
+        authorized: true,
+        remote,
+        commit: {
+          sha: info.sha,
+          // `author` is GitHub's account link; null when the commit email is not
+          // on any account, which is why the panel keeps git's name as fallback.
+          login,
+          name: login ?? info.commit?.author?.name ?? null,
+          avatarUrl: info.author?.avatar_url ?? null,
+        },
+      }
+    }
     if (request === 'pulls') {
       const [info, pulls] = await Promise.all([
-        github(token, `/repos/${remote.slug}`),
-        github(token, `/repos/${remote.slug}/pulls?state=open&per_page=20&sort=updated`),
+        github(token, `/repos/${remote.slug}`, {}, remote.host),
+        github(token, `/repos/${remote.slug}/pulls?state=open&per_page=20&sort=updated`, {}, remote.host),
       ])
       return {
         connected: true,
@@ -236,7 +458,7 @@ export function createActions({ git, workspaces }) {
       }
     }
     if (request === 'issues') {
-      const issues = await github(token, `/repos/${remote.slug}/issues?state=open&per_page=20&sort=updated`)
+      const issues = await github(token, `/repos/${remote.slug}/issues?state=open&per_page=20&sort=updated`, {}, remote.host)
       return {
         connected: true,
         authorized: true,
@@ -268,7 +490,7 @@ export function createActions({ git, workspaces }) {
           body: String(params.body ?? ''),
           draft: Boolean(params.draft),
         }),
-      })
+      }, remote.host)
       return { connected: true, authorized: true, remote, pull: { number: created.number, url: created.html_url } }
     }
     if (request === 'merge') {
@@ -276,7 +498,7 @@ export function createActions({ git, workspaces }) {
       const merged = await github(token, `/repos/${remote.slug}/pulls/${number}/merge`, {
         method: 'PUT',
         body: JSON.stringify({ merge_method: String(params.method ?? 'merge') }),
-      })
+      }, remote.host)
       return { connected: true, authorized: true, remote, merged: Boolean(merged.merged), message: merged.message }
     }
     throw new Error(`unknown github action: ${request}`)

@@ -1,11 +1,10 @@
 /**
- * Plugin wiring: dictionaries, styles, the sidebar cell, and the `main` panel.
+ * Plugin wiring: dictionaries, styles, and the right-column tab.
  *
- * The sidebar cell is a `sidebar.panellist` row; the owner draws the button and
- * selects the `main` panel whose key matches the row's id, which is the same
- * contract the host's own Plugins row and the community market use. One id
- * (`git-management`) therefore addresses both seats and no navigation code is
- * needed here.
+ * One seat: `sidebarRightTabs.register` declares the type (and the start-page
+ * card), and two slots keyed by that id supply the tab body and its chip. The
+ * body itself swaps between the change list and a file's diff, so opening a
+ * diff never covers the conversation column.
  */
 
 /** Dictionary namespace for this plugin's copy. */
@@ -16,6 +15,24 @@ const TAB_ID = 'dsh-git-management'
 
 /** The tab kind, i.e. what the column records for `openTab(kind)`. */
 const TAB_KIND = 'git'
+
+/** The second tab type: one file's diff, opened beside the change list. */
+const DIFF_TAB_ID = 'dsh-git-diff'
+
+/** The diff tab's kind, as `sidebarRight.openTab` names it. */
+const DIFF_TAB_KIND = 'git-diff'
+
+/**
+ * The third tab type: one commit's whole change set.
+ *
+ * Registered `multiple: true`, which is what makes every history click its own
+ * tab — the same independent-instance rule the terminal tabs use. Without it
+ * the column would reuse one tab and a second commit would replace the first.
+ */
+const COMMIT_TAB_ID = 'dsh-git-commit'
+
+/** The commit tab's kind, as `sidebarRight.openTab` names it. */
+const COMMIT_TAB_KIND = 'git-commit'
 
 /** Chinese copy (the GUI's default language on this machine). */
 const zh = {
@@ -56,10 +73,16 @@ const zh = {
   commitPlaceholder: '提交信息（Ctrl+Enter 提交）',
   stageAll: '全部暂存',
   amend: '修改上次提交',
+  markResolved: '标记为已解决',
+  conflictBlockHint: '有未解决的冲突——解决后逐档标记。',
+  abortMerge: '中止合并',
+  mergeAbortConfirm: '中止这次合并？工作区会回到合并前的状态。',
   stagedCount: '项已暂存',
   changesCount: '项未暂存',
   commit: '提交',
   commitHint: '提交已暂存的更改',
+  commitNeedsMessage: '先写提交信息',
+  commitNeedsStaged: '先暂存至少一个文件',
   unstageAll: '全部取消暂存',
   stageAllFiles: '全部暂存',
   unstage: '取消暂存',
@@ -73,8 +96,11 @@ const zh = {
   status: '状态',
   loadingDiff: '正在读取差异…',
   binaryDiff: '二进制文件，无法显示差异。',
+  diffUnmerged: '这个文件有未解决的冲突——先解决，再标记为已解决。',
   emptyDiff: '没有文本差异。',
   githubLoading: '正在检查 GitHub 远端…',
+  retryGithub: '重新检查',
+  loadReposFailed: '读不到工作区列表——可能是宿主端还没准备好。',
   noGithubRemote: '当前仓库没有 GitHub 远端（origin）。',
   stars: '星标',
   forks: '复刻',
@@ -97,6 +123,63 @@ const zh = {
   baseBranch: '目标分支',
   cancel: '取消',
   createPull: '创建',
+  worktrees: '工作樹',
+  worktreeMain: '主',
+  worktreeClean: 'clean',
+  worktreeSwitch: '把面板切到此工作樹',
+  worktreeOpen: '在 DSH 開成工作區',
+  worktreeRemove: '移除工作樹',
+  worktreeNew: '新增工作樹',
+  worktreePrune: '清理失效記錄（git worktree prune）',
+  worktreeNamePlaceholder: '名稱，例如 fix-ui',
+  worktreeLayoutHint: '會建立在 .agents/worktrees/<名稱>，分支 worktree-<名稱>',
+  worktreeBranchPreview: '將建立',
+  worktreeRemoveConfirm: '移除工作樹 {path}？裡面未提交的內容會一併消失。',
+  worktreeNone: '目前只有這一個工作樹。',
+  worktreeStale: '宿主端還是舊版（沒有工作樹 API）。關視窗不會結束背景程序——請從選單或托盤「完全結束」DSH Desktop 再開。',
+  openDiffHint: '開啟這個檔案的差異',
+  diffBack: '返回',
+  diffBackHint: '關閉差異檢視（Esc）',
+  diffPrev: '上一個檔案',
+  diffNext: '下一個檔案',
+  diffSplit: '並排',
+  diffUnified: '統一',
+  diffFullFile: '全文',
+  diffOnlyChanges: '僅變更',
+  diffContextHint: '切換顯示範圍（全文／僅變更）',
+  diffShowStaged: '看已暫存',
+  diffShowWorktree: '看工作區',
+  diffStagedBadge: '已暫存',
+  diffWorktreeBadge: '未暫存',
+  diffNothingOpen: '從右側的變更清單點一個檔案。',
+  diffTabTitle: '檔案差異',
+  commitDiffTabTitle: '提交差異',
+  commitDiffLoading: '正在讀取這次提交的變更…',
+  commitDiffEmpty: '這次提交沒有檔案變更。',
+  commitDiffBinaryBadge: '二進位',
+  commitDiffBinary: '二進位檔，不顯示差異。',
+  commitDiffNoText: '沒有文字差異。',
+  commitDiffModeOnly: '只改了檔案權限（mode），內容沒有變。',
+  commitDiffFileCount: '{files} 個檔案',
+  commitDiffMergeBadge: '合併',
+  commitDiffExpandAll: '展開全部',
+  commitDiffCollapseAll: '收合全部',
+  commitDiffTruncated: '共 {total} 個檔案，這裡只載入前 {shown} 個的差異。',
+  commitDiffRetry: '重試',
+  commitDiffStale: '宿主端還是舊版，沒有 commitDiff 這個動作。Ctrl+R 只重載頁面——請從選單／托盤「完全結束」DSH Desktop 再開。',
+  hoverLoading: '讀取中…',
+  hoverStatFiles: '{files} 個檔案變更',
+  hoverStatAdditions: '{additions} 行插入(+)',
+  hoverStatDeletions: '{deletions} 行刪除(-)',
+  hoverStatSeparator: '，',
+  hoverNoBranch: '這個分支還沒有提交。',
+  refHead: '目前檢出（本機）',
+  refLocal: '本機分支',
+  refRemote: '遠端分支',
+  refTag: '標籤',
+  refDetached: '分離 HEAD',
+  collapseGroup: '收合這一組',
+  expandGroup: '展開這一組',
 }
 
 /** English copy. */
@@ -138,6 +221,10 @@ const en = {
   commitPlaceholder: 'Commit message (Ctrl+Enter to commit)',
   stageAll: 'Stage all',
   amend: 'Amend last commit',
+  markResolved: 'Mark resolved',
+  conflictBlockHint: 'Unresolved conflicts — resolve, then mark each file.',
+  abortMerge: 'Abort merge',
+  mergeAbortConfirm: 'Abort this merge? The working tree goes back to how it was before.',
   stagedCount: 'staged',
   changesCount: 'unstaged',
   commit: 'Commit',
@@ -155,8 +242,11 @@ const en = {
   status: 'Status',
   loadingDiff: 'Reading the diff…',
   binaryDiff: 'Binary file; no textual diff.',
+  diffUnmerged: 'This file still has unresolved conflicts — resolve them, then mark it resolved.',
   emptyDiff: 'No textual difference.',
   githubLoading: 'Looking for a GitHub remote…',
+  retryGithub: 'Check again',
+  loadReposFailed: 'Could not read the workspace list — the host may not be ready yet.',
   noGithubRemote: 'This repository has no GitHub remote (origin).',
   stars: 'Stars',
   forks: 'Forks',
@@ -179,16 +269,198 @@ const en = {
   baseBranch: 'base branch',
   cancel: 'Cancel',
   createPull: 'Create',
+  worktrees: 'Worktrees',
+  worktreeMain: 'main',
+  worktreeClean: 'clean',
+  worktreeSwitch: 'Point the panel at this worktree',
+  worktreeOpen: 'Open as a DSH workspace',
+  worktreeRemove: 'Remove worktree',
+  worktreeNew: 'New worktree',
+  worktreePrune: 'Prune stale records',
+  worktreeNamePlaceholder: 'name, e.g. fix-ui',
+  worktreeLayoutHint: 'Created at .agents/worktrees/<name> on branch worktree-<name>',
+  worktreeBranchPreview: 'Will create',
+  worktreeRemoveConfirm: 'Remove worktree {path}? Uncommitted work inside it is lost.',
+  worktreeNone: 'This is the only worktree.',
+  worktreeStale: 'The host is still the older build (no worktree API). Closing the window keeps the background process alive — fully quit DSH Desktop and relaunch.',
+  openDiffHint: 'Open this file’s diff',
+  diffBack: 'Back',
+  diffBackHint: 'Close the diff view (Esc)',
+  diffPrev: 'Previous file',
+  diffNext: 'Next file',
+  diffSplit: 'Split',
+  diffUnified: 'Unified',
+  diffFullFile: 'Whole file',
+  diffOnlyChanges: 'Changes only',
+  diffContextHint: 'Toggle how much context the diff carries',
+  diffShowStaged: 'Show staged',
+  diffShowWorktree: 'Show working tree',
+  diffStagedBadge: 'staged',
+  diffWorktreeBadge: 'working tree',
+  diffNothingOpen: 'Pick a file in the change list on the right.',
+  diffTabTitle: 'File diff',
+  commitDiffTabTitle: 'Commit diff',
+  commitDiffLoading: 'Reading this commit’s changes…',
+  commitDiffEmpty: 'This commit changed no files.',
+  commitDiffBinaryBadge: 'binary',
+  commitDiffBinary: 'Binary file; no textual diff.',
+  commitDiffNoText: 'No textual difference.',
+  commitDiffModeOnly: 'Only the file mode changed; the contents did not.',
+  commitDiffFileCount: '{files} files',
+  commitDiffMergeBadge: 'merge',
+  commitDiffExpandAll: 'Expand all',
+  commitDiffCollapseAll: 'Collapse all',
+  commitDiffTruncated: '{total} files in all; the diffs for the first {shown} are shown here.',
+  commitDiffRetry: 'Retry',
+  commitDiffStale: 'The host is still the older build (no commitDiff action). Reloading the page cannot load it — fully quit DSH Desktop and relaunch.',
+  hoverLoading: 'Reading…',
+  hoverStatFiles: '{files} files changed',
+  hoverStatAdditions: '{additions} insertions(+)',
+  hoverStatDeletions: '{deletions} deletions(-)',
+  hoverStatSeparator: ', ',
+  hoverNoBranch: 'This branch has no commits yet.',
+  refHead: 'checked out here',
+  refLocal: 'local branch',
+  refRemote: 'remote branch',
+  refTag: 'tag',
+  refDetached: 'detached HEAD',
+  collapseGroup: 'Collapse this group',
+  expandGroup: 'Expand this group',
 }
 
 /**
- * The tab body: the panel inside the crash boundary, told it lives in a
- * ~320–420px column rather than a page.
+ * The diff tab's body.
+ *
+ * The file to show arrives as the tab's navigation parameters — `openTab(kind,
+ * { params })` records them, and `useTabNavigation` is this seat's hook onto
+ * that record, so re-opening the tab for another file only bumps `revision`.
+ *
+ * @param props - session-scoped slot props plus `useTabNavigation` and `t`.
+ * @returns the boundary element wrapping the diff.
+ */
+function DiffTabBody(props) {
+  return h(PanelBoundary, { ...props, compact: true, seat: 'diff' })
+}
+
+/**
+ * The diff seat inside the boundary: reads the tab's navigation parameters and
+ * keeps the diff store pointed at them.
+ *
+ * Reading `useTabInfo` here rather than in `DiffTabBody` keeps a throw from the
+ * column (a tab that is not committed yet) inside the crash boundary, where it
+ * costs one error card instead of the whole tab strip.
+ *
+ * @param props - slot props plus `useTabInfo`, `actions` and `t`.
+ * @returns the diff panel.
+ */
+function DiffPanelSeat(props) {
+  const useInfo = typeof props.useTabInfo === 'function' ? props.useTabInfo : () => ({ tab: null })
+  const info = useInfo()
+  const navigation = info?.tab?.navigation ?? null
+  const params = navigation?.params ?? null
+  const revision = navigation?.revision ?? 0
+
+  useEffect(() => {
+    if (params !== null && typeof params.file === 'string' && typeof params.path === 'string') openDiff(params)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the revision is the
+    // signal that the opener asked for this file, even when it is the same one.
+  }, [revision])
+
+  const close = () => {
+    if (typeof props.actions?.close === 'function') props.actions.close()
+    else closeDiff()
+  }
+
+  return h(DiffPanel, { ...props, compact: true, onClose: close })
+}
+
+/**
+ * The diff tab's chip: the file name, so a strip of tabs says which is which.
+ * @param props - slot props plus `useTabNavigation` and `t`.
+ * @returns the title element.
+ */
+function DiffTabTitle(props) {
+  const useInfo = typeof props.useTabInfo === 'function' ? props.useTabInfo : () => ({ tab: null })
+  const info = useInfo()
+  const params = info?.tab?.navigation?.params ?? null
+  const t = typeof props?.t === 'function' ? props.t : tr
+  const file = typeof params?.file === 'string' ? params.file : t('diffTabTitle')
+  const slash = file.lastIndexOf('/')
+  return h(
+    'span',
+    { className: 'gmg-difftabtitle' },
+    h(IconChevronRight, { size: 11 }),
+    h('span', { className: 'gmg-difftabname', title: file }, slash === -1 ? file : file.slice(slash + 1)),
+    params?.staged === true ? h('span', { className: 'gmg-gh-label' }, t('diffStagedBadge')) : null,
+  )
+}
+/**
+ * The commit tab's body, inside the crash boundary.
+ * @param props - slot props.
+ * @returns the boundary element.
+ */
+function CommitTabBody(props) {
+  return h(PanelBoundary, { ...props, compact: true, seat: 'commit' })
+}
+
+/**
+ * The commit seat: reads the tab's own parameters and keeps its cached view
+ * pointed at them.
+ *
+ * Each commit tab is an independent occurrence (`multiple: true`), so this hook
+ * is what gives every tab its own commit: the params arrive per tab, the cache
+ * is keyed by them, and a re-navigation of the same tab only bumps `revision`.
+ *
+ * @param props - slot props plus `useTabInfo`, `actions` and `t`.
+ * @returns the commit panel.
+ */
+function CommitPanelSeat(props) {
+  const useInfo = typeof props.useTabInfo === 'function' ? props.useTabInfo : () => ({ tab: null })
+  const info = useInfo()
+  const navigation = info?.tab?.navigation ?? null
+  const params = navigation?.params ?? null
+  const revision = navigation?.revision ?? 0
+  const path = typeof params?.path === 'string' ? params.path : null
+  const sha = typeof params?.sha === 'string' ? params.sha : null
+  const key = path === null || sha === null ? null : commitViewKey(path, sha)
+  const view = useCommitView(key)
+
+  // While this tab is on screen its entry is pinned, so the cache trim cannot
+  // evict the commit a reader is looking at.
+  useEffect(() => pinCommitView(key), [key])
+
+  useEffect(() => {
+    if (path !== null && sha !== null) loadCommitDiff({ path, sha })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the revision is the
+    // signal that the opener asked for this commit, even when it is the same one.
+  }, [revision, key])
+
+  // A cache that dropped this entry (it was the oldest) is re-read rather than
+  // leaving an empty tab behind.
+  useEffect(() => {
+    if (path !== null && sha !== null && view === null) loadCommitDiff({ path, sha })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, view === null])
+
+  const close = () => {
+    if (typeof props.actions?.close === 'function') props.actions.close()
+  }
+  const retry = () => {
+    if (path !== null && sha !== null) loadCommitDiff({ path, sha })
+  }
+
+  // A tab that is not the visible one in a split strip must not answer Escape.
+  const active = info?.tab?.visible !== false
+  return h(CommitDiffPanel, { ...props, params, view, active, onClose: close, onRetry: retry })
+}
+
+/**
+ * The tab body wrapped in the crash boundary, told it lives in a narrow column.
  * @param props - session-scoped slot props.
- * @returns the panel element.
+ * @returns the boundary element.
  */
 function GitTabBody(props) {
-  return h(PanelBoundary, { ...props, compact: true })
+  return h(PanelBoundary, { ...props, compact: true, seat: 'list' })
 }
 
 /**
@@ -239,7 +511,8 @@ class PanelBoundary extends react.Component {
         ),
       )
     }
-    return h(GitPanel, this.props)
+    const Comp = this.props.seat === 'diff' ? DiffPanelSeat : this.props.seat === 'commit' ? CommitPanelSeat : GitPanel
+    return h(Comp, this.props)
   }
 }
 
@@ -317,9 +590,122 @@ exports.apply = function apply(ctx) {
         ),
       )
 
-      console.log('[dsh-git-management] source control tab registered (sidebar.right.pane.tab)')
+      // The second type: one file's diff as its own tab. No guide entry — this
+      // tab is only ever reached from a row in the list, never from the start
+      // page. It is not `multiple`, so the column dedupes it: a second click
+      // re-navigates the same tab instead of piling up one tab per file.
+      scoped.effect(
+        () =>
+          scoped.sidebarRightTabs.register({
+            id: DIFF_TAB_ID,
+            kind: DIFF_TAB_KIND,
+            priority: 'extension',
+            title: () => t('diffTabTitle'),
+            guide: [],
+          }),
+        'dsh-git-management: diff tab type',
+      )
+
+      scoped.slots.inject('sidebar.right.pane.tab', () =>
+        scoped.slots.register(
+          {
+            name: 'sidebar.right.pane.tab',
+            key: DIFF_TAB_ID,
+            locale: NS,
+            inject: () => ({ t }),
+          },
+          DiffTabBody,
+        ),
+      )
+
+      scoped.slots.inject('sidebar.right.pane.tab.title', () =>
+        scoped.slots.register(
+          {
+            name: 'sidebar.right.pane.tab.title',
+            key: DIFF_TAB_ID,
+            locale: NS,
+            inject: () => ({ t }),
+          },
+          DiffTabTitle,
+        ),
+      )
+
+      // The third type: one commit's whole change set. `multiple: true` is the
+      // point — every history click is its own tab, so two commits can be read
+      // side by side. The column gives each open its own occurrence id, which
+      // is also why the body reads the commit from its own navigation params.
+      scoped.effect(
+        () =>
+          scoped.sidebarRightTabs.register({
+            id: COMMIT_TAB_ID,
+            kind: COMMIT_TAB_KIND,
+            priority: 'extension',
+            multiple: true,
+            title: () => t('commitDiffTabTitle'),
+            guide: [],
+          }),
+        'dsh-git-management: commit diff tab type',
+      )
+
+      scoped.slots.inject('sidebar.right.pane.tab', () =>
+        scoped.slots.register(
+          {
+            name: 'sidebar.right.pane.tab',
+            key: COMMIT_TAB_ID,
+            locale: NS,
+            inject: () => ({ t, lang: scoped.locale.getLocale().active }),
+          },
+          CommitTabBody,
+        ),
+      )
+
+      scoped.slots.inject('sidebar.right.pane.tab.title', () =>
+        scoped.slots.register(
+          {
+            name: 'sidebar.right.pane.tab.title',
+            key: COMMIT_TAB_ID,
+            locale: NS,
+            inject: () => ({ t }),
+          },
+          CommitTabTitle,
+        ),
+      )
+
+      console.log('[dsh-git-management] tabs registered (source control + file diff + commit diff)')
     } catch (error) {
       console.error('[dsh-git-management] mount failed:', error)
+    }
+  })
+
+  // Opening a file's diff is a tab open in the same column: the change list and
+  // the conversation both stay exactly where the user left them.
+  ctx.inject(['sidebarRight'], (scoped) => {
+    gmgSidebarBridge = {
+      openDiff: (params) => {
+        try {
+          scoped.sidebarRight.openTab(DIFF_TAB_KIND, { params })
+        } catch (error) {
+          console.error('[dsh-git-management] could not open the diff tab:', error)
+        }
+      },
+      openCommit: (params) => {
+        try {
+          scoped.sidebarRight.openTab(COMMIT_TAB_KIND, { params })
+        } catch (error) {
+          console.error('[dsh-git-management] could not open the commit tab:', error)
+        }
+      },
+    }
+  })
+
+  // The worktree rows' "open as a workspace" action: create the workspace
+  // (idempotent per canonical path) and hand the user to it. Optional services,
+  // so a GUI without them simply renders the action as unavailable.
+  ctx.inject(['workspaces', 'uiWorkspace'], (scoped) => {
+    gmgWorkspaceBridge = async (path) => {
+      const view = await scoped.workspaces.create({ path })
+      await scoped.uiWorkspace.openWorkspace(view.id)
+      return view
     }
   })
 }

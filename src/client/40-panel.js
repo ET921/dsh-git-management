@@ -45,7 +45,7 @@ function GitPanel(props) {
     const tick = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       const current = gitStore.get()
-      if (current.path !== null && current.busy === null) gitStore.refresh()
+      if (current.path !== null && current.busy === null) gitStore.refreshStatus()
     }
     const timer = window.setInterval(tick, 8000)
     const onFocus = () => tick()
@@ -103,7 +103,7 @@ function GitPanel(props) {
           title: t('refresh'),
           'aria-label': t('refresh'),
           disabled: state.path === null || busy !== null,
-          onClick: () => (isRepo ? gitStore.refresh() : gitStore.loadRepos()),
+          onClick: () => (isRepo ? gitStore.refreshAll() : gitStore.loadRepos()),
         },
         h(IconRefresh, { size: 15 }),
       ),
@@ -157,6 +157,25 @@ function GitPanel(props) {
   let body = null
   if (!state.ready) {
     body = h('div', { className: 'gmg-card' }, h('div', { className: 'gmg-empty' }, t('loading')))
+  } else if (state.path === null && state.loadFailed === true) {
+    // The last workspace read failed. Saying "pick a workspace" here would be a
+    // lie — the list is empty because nobody could read it — so the card offers
+    // the retry the user needs instead.
+    body = h(
+      'div',
+      { className: 'gmg-card' },
+      h('div', { className: 'gmg-empty' }, t('loadReposFailed')),
+      h(
+        'div',
+        { className: 'gmg-form' },
+        h(
+          'button',
+          { className: 'gmg-btn is-primary', type: 'button', disabled: busy !== null, onClick: () => gitStore.loadRepos() },
+          h(IconRefresh, { size: 13 }),
+          t('loadRepos'),
+        ),
+      ),
+    )
   } else if (state.path === null) {
     body = h(
       'div',
@@ -207,49 +226,19 @@ function GitPanel(props) {
     body = h(
       'div',
       { className: 'gmg-card' },
-      h(BranchBar, { status: snapshot, t, busy }),
+      h(BranchBar, { status: snapshot, t, busy, branches: state.branches }),
       h(CommitBox, { status: snapshot, state, t, busy }),
       h(ChangeGroup, { title: t('staged'), rows: snapshot.staged, staged: true, t, empty: null }),
       h(ChangeGroup, { title: t('changes'), rows: snapshot.changes, staged: false, t, empty: t('noChanges') }),
       snapshot.conflicts.length > 0
         ? h(ChangeGroup, { title: t('conflicts'), rows: snapshot.conflicts, staged: false, conflicts: true, t, empty: null })
         : null,
+      snapshot.conflicts.length > 0 ? h(ConflictBar, { t, busy }) : null,
     )
   }
 
   const history = isRepo
-    ? h(
-        'div',
-        { className: 'gmg-card' },
-        h(
-          'div',
-          { className: 'gmg-group-head' },
-          h(IconCommit, { size: 13 }),
-          t('history'),
-          h('span', { className: 'gmg-count' }, ` ${state.log.length}`),
-          h('span', { className: 'gmg-spacer' }),
-          h(
-            'button',
-            { className: 'gmg-btn is-ghost', type: 'button', onClick: () => setShowAllHistory((value) => !value) },
-            showAllHistory ? t('showLess') : t('showMore'),
-          ),
-        ),
-        h(
-          'div',
-          { className: 'gmg-history' },
-          state.log.length === 0
-            ? h('div', { className: 'gmg-empty' }, t('noCommits'))
-            : state.log.slice(0, showAllHistory ? state.log.length : 6).map((commit) =>
-                h(
-                  'div',
-                  { className: 'gmg-commit-row', key: commit.sha, title: `${commit.sha}\n${commit.author} <${commit.email}>` },
-                  h('span', { className: 'gmg-sha' }, commit.short),
-                  h('span', { className: 'gmg-subject' }, commit.subject),
-                  h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),
-                ),
-              ),
-        ),
-      )
+    ? h(HistoryCard, { path: state.path, log: state.log, branches: state.branches, t, lang, expanded: showAllHistory, onToggle: () => setShowAllHistory((value) => !value) })
     : null
 
   const github = isRepo ? h(GithubCard, { status: snapshot, state, t, busy }) : null
@@ -257,8 +246,333 @@ function GitPanel(props) {
   return h(
     'div',
     { className: `gmg-root${compact ? ' is-compact' : ''}` },
-    h('div', { className: 'gmg-page' }, header, ...notices, body, history, github),
+    h('div', { className: 'gmg-page' }, header, ...notices, body, h(WorktreeSection, { state, t, busy, isRepo }), history, github),
   )
+}
+
+/**
+ * How many commits the list shows before "show all".
+ * Ten is the point where a rail starts reading as a graph rather than a line,
+ * while still fitting in the column without scrolling the panel away.
+ */
+const HISTORY_PREVIEW = 10
+
+/**
+ * Read one commit's `%D` decoration.
+ *
+ * Git hands back the decoration as it prints it — `HEAD -> dev`, `origin/dev`,
+ * `tag: v1.0` — so the shape of the string is the kind, except that a plain
+ * name is only a local branch if this checkout actually has one by that name.
+ * Everything else is a remote.
+ *
+ * @param commit - one log row.
+ * @param branches - the `branches` action result, or null before it arrives.
+ * @returns `[{ name, kind }]`, `kind` being `head`, `branch`, `remote`, `tag` or `detached`.
+ */
+function historyRefs(commit, branches) {
+  const local = new Set((branches?.branches ?? []).map((row) => row.name))
+  return (commit.refs ?? []).map((decoration) => {
+    if (decoration.startsWith('HEAD -> ')) return { name: decoration.slice(8), kind: 'head' }
+    if (decoration === 'HEAD') return { name: 'HEAD', kind: 'detached' }
+    if (decoration.startsWith('tag: ')) return { name: decoration.slice(5), kind: 'tag' }
+    return { name: decoration, kind: local.has(decoration) ? 'branch' : 'remote' }
+  })
+}
+
+/**
+ * The glyph that goes inside a ref chip.
+ *
+ * Colour alone would be the only difference between "this branch lives on my
+ * disk" and "this branch lives on the server", which a third of readers cannot
+ * use. The glyph carries the same fact a second time: a filled dot for the
+ * checkout, a branch mark for another local branch, a cloud for a remote, a tag
+ * for a release.
+ *
+ * @param kind - one of `head`, `branch`, `remote`, `tag`, `detached`.
+ * @returns the icon element, or null.
+ */
+function refGlyph(kind) {
+  if (kind === 'head') return h('span', { className: 'gmg-ref-dot' })
+  if (kind === 'branch') return h(IconBranch, { size: 9 })
+  if (kind === 'remote') return h(IconCloud, { size: 10 })
+  if (kind === 'tag') return h(IconTag, { size: 9 })
+  return null
+}
+
+/**
+ * Where one ref lives, in words, for the chip's tooltip.
+ * @param kind - one of `head`, `branch`, `remote`, `tag`, `detached`.
+ * @param t - translator.
+ * @returns the label.
+ */
+function refScope(kind, t) {
+  if (kind === 'head') return t('refHead')
+  if (kind === 'branch') return t('refLocal')
+  if (kind === 'remote') return t('refRemote')
+  if (kind === 'tag') return t('refTag')
+  return t('refDetached')
+}
+
+/**
+ * The history card: the commit list on the left, the lane rail down its right.
+ *
+ * The rail is one SVG for the whole list rather than one per row, because a lane
+ * has to join across row borders; the rows themselves only reserve the width the
+ * rail occupies, and every row is pinned to `GRAPH_ROW_HEIGHT` so the two line
+ * up. Refs ride on the row instead of the id: a reader needs to know "this is
+ * main" far more often than "this is 1268d25", and the id is in the hover card.
+ *
+ * Every row is also the way into that commit: clicking it opens the commit's
+ * change set as its own tab in the same column, the way Cursor's history does.
+ * Clicking a second commit opens a second tab; the list itself never moves.
+ *
+ * @param props - `{ path, log, branches, t, lang, expanded, onToggle }`.
+ * @returns the card.
+ */
+function HistoryCard(props) {
+  const { path, log, branches, t, lang, expanded, onToggle } = props
+  const visible = useMemo(() => (expanded ? log : log.slice(0, HISTORY_PREVIEW)), [log, expanded])
+  const layout = useMemo(() => layoutHistory(visible), [visible])
+  const railWidth = useMemo(() => graphRailWidth(layout), [layout])
+
+  const openCommit = (commit) => {
+    if (typeof gmgSidebarBridge.openCommit !== 'function') return
+    gmgSidebarBridge.openCommit({ path, sha: commit.sha, short: commit.short, subject: commit.subject })
+  }
+
+  return h(
+    'div',
+    { className: 'gmg-card' },
+    h(
+      'div',
+      { className: 'gmg-group-head' },
+      h(IconCommit, { size: 13 }),
+      t('history'),
+      h('span', { className: 'gmg-count' }, ` ${log.length}`),
+      h('span', { className: 'gmg-spacer' }),
+      h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: onToggle }, expanded ? t('showLess') : t('showMore')),
+    ),
+    h(
+      'div',
+      { className: 'gmg-history', style: { '--gmg-graph-w': `${railWidth}px` } },
+      log.length === 0
+        ? h('div', { className: 'gmg-empty' }, t('noCommits'))
+        : [
+            h(HistoryGraph, { key: 'rail', rows: layout }),
+            layout.map((row) => {
+              const commit = row.commit
+              const refs = historyRefs(commit, branches)
+              const shown = refs.slice(0, 2)
+              const extra = refs.length - shown.length
+              const open = () => openCommit(commit)
+              return h(
+                HoverTarget,
+                { key: commit.sha, card: h(CommitHoverCard, { commit, t }) },
+                h(
+                  'div',
+                  {
+                    className: 'gmg-commit-row',
+                    role: 'button',
+                    tabIndex: 0,
+                    onClick: open,
+                    onKeyDown: (event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        open()
+                      }
+                    },
+                  },
+                  shown.map((ref) => h('span', { key: ref.kind + ref.name, className: `gmg-ref is-${ref.kind}`, title: `${refScope(ref.kind, t)}：${ref.name}` }, refGlyph(ref.kind), ref.name)),
+                  extra > 0 ? h('span', { className: 'gmg-ref-more', title: refs.map((ref) => ref.name).join(', ') }, `+${extra}`) : null,
+                  h('span', { className: 'gmg-subject', title: commit.subject }, commit.subject),
+                  h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),
+                ),
+              )
+            }),
+          ],
+    ),
+  )
+}
+
+/**
+ * Every checkout of this repository — the visual half of DSH's worktree story.
+ *
+ * The list is the one DSH's own worktree tool produces (and any the user made
+ * by hand), so a delegated Agent's checkout shows up beside the main tree with
+ * its branch, its dirty count, and three ways out: switch the panel to it, open
+ * it as a DSH workspace, or remove it.
+ *
+ * @param props - `{ state, t, busy, isRepo }`.
+ * @returns the section, or null when there is nothing to show.
+ */
+function WorktreeSection(props) {
+  const { state, t, busy, isRepo } = props
+  const [creating, setCreating] = useState(false)
+  const draft = state.worktreeDraft
+
+  if (!isRepo) return null
+
+  const data = state.worktrees
+  const rows = data?.worktrees ?? []
+  const rootKey = data?.rootKey ?? ''
+  const root = data?.root ?? ''
+  const currentKey = pathKey(state.path ?? '')
+  const canOpen = canOpenWorkspace()
+
+  const shorten = (row) => {
+    if (root !== '' && row.key.startsWith(rootKey) && row.key.length > rootKey.length) {
+      return row.path.slice(root.length).replace(/^[\\/]+/, '')
+    }
+    return row.path
+  }
+
+  const head = h(
+    'div',
+    { className: 'gmg-group-head' },
+    h(IconWorktree, { size: 13 }),
+    t('worktrees'),
+    h('span', { className: 'gmg-count' }, rows.length > 0 ? ` ${rows.length}` : ''),
+    h('span', { className: 'gmg-spacer' }),
+    h(
+      'button',
+      {
+        className: 'gmg-icon-btn',
+        type: 'button',
+        title: t('worktreePrune'),
+        'aria-label': t('worktreePrune'),
+        disabled: busy !== null,
+        onClick: () => gitStore.pruneWorktrees(),
+      },
+      h(IconScissors, { size: 13 }),
+    ),
+    h(
+      'button',
+      {
+        className: 'gmg-icon-btn',
+        type: 'button',
+        title: t('worktreeNew'),
+        'aria-label': t('worktreeNew'),
+        disabled: busy !== null,
+        onClick: () => setCreating((value) => !value),
+      },
+      h(IconPlus, { size: 13 }),
+    ),
+  )
+
+  const form = creating
+    ? h(
+        'form',
+        {
+          className: 'gmg-form',
+          onSubmit: (event) => {
+            event.preventDefault()
+            const name = draft.trim()
+            if (name === '') return
+            gitStore.createWorktree(name).then((ok) => {
+              if (ok) setCreating(false)
+            })
+          },
+        },
+        h('input', {
+          className: 'gmg-input',
+          autoFocus: true,
+          placeholder: t('worktreeNamePlaceholder'),
+          value: draft,
+          onChange: (event) => gitStore.setWorktreeDraft(event.target.value),
+        }),
+        draft.trim() === ''
+          ? h('div', { className: 'gmg-hint' }, t('worktreeLayoutHint'))
+          : h(
+              'div',
+              { className: 'gmg-hint' },
+              `${t('worktreeBranchPreview')}: worktree-${draft.trim()} · .agents/worktrees/${draft.trim()}`,
+            ),
+        h(
+          'div',
+          { style: { display: 'flex', gap: 8, justifyContent: 'flex-end' } },
+          h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: () => setCreating(false) }, t('cancel')),
+          h('button', { className: 'gmg-btn is-primary', type: 'submit', disabled: busy !== null || draft.trim() === '' }, t('create')),
+        ),
+      )
+    : null
+
+  const body =
+    data === null
+      ? h('div', { className: 'gmg-empty' }, state.worktreeStale ? t('worktreeStale') : state.worktreeError ?? t('loading'))
+      : rows.length === 0
+        ? h('div', { className: 'gmg-empty' }, t('worktreeNone'))
+        : h(
+            'div',
+            { className: 'gmg-wts' },
+            rows.map((row) => {
+              const isCurrent = row.key === currentKey
+              const label = row.detached ? `${t('detached')} ${String(row.head ?? '').slice(0, 7)}` : row.branch ?? ''
+              return h(
+                'div',
+                { className: `gmg-wt${isCurrent ? ' is-current' : ''}`, key: row.key, title: row.path },
+                h('span', { className: 'gmg-wt-branch' }, h(IconBranch, { size: 12 }), h('span', { className: 'gmg-wt-name' }, label)),
+                row.main ? h('span', { className: 'gmg-wt-tag' }, t('worktreeMain')) : null,
+                row.locked ? h('span', { className: 'gmg-wt-tag' }, 'locked') : null,
+                row.prunable ? h('span', { className: 'gmg-wt-tag is-warn' }, 'prunable') : null,
+                isCurrent ? h('span', { className: 'gmg-wt-tag is-current' }, '●') : null,
+                h('span', { className: 'gmg-wt-path' }, shorten(row)),
+                h(
+                  'span',
+                  { className: `gmg-wt-dirty${row.dirtyKnown && row.dirty > 0 ? ' is-dirty' : ''}` },
+                  row.dirtyKnown ? (row.dirty === 0 ? t('worktreeClean') : String(row.dirty)) : '—',
+                ),
+                h(
+                  'span',
+                  { className: 'gmg-actions' },
+                  h(
+                    'button',
+                    {
+                      className: 'gmg-icon-btn',
+                      type: 'button',
+                      title: t('worktreeSwitch'),
+                      'aria-label': t('worktreeSwitch'),
+                      disabled: isCurrent || busy !== null,
+                      onClick: () => gitStore.focusWorktree(row.path),
+                    },
+                    h(IconChevronRight, { size: 13 }),
+                  ),
+                  canOpen
+                    ? h(
+                        'button',
+                        {
+                          className: 'gmg-icon-btn',
+                          type: 'button',
+                          title: t('worktreeOpen'),
+                          'aria-label': t('worktreeOpen'),
+                          disabled: busy !== null || row.prunable,
+                          onClick: () => gitStore.openWorktreeInDsh(row.path),
+                        },
+                        h(IconExternal, { size: 13 }),
+                      )
+                    : null,
+                  row.main || isCurrent
+                    ? null
+                    : h(
+                        'button',
+                        {
+                          className: 'gmg-icon-btn',
+                          type: 'button',
+                          title: t('worktreeRemove'),
+                          'aria-label': t('worktreeRemove'),
+                          disabled: busy !== null || row.prunable,
+                          onClick: () => {
+                            if (!window.confirm(t('worktreeRemoveConfirm', { path: row.path }))) return
+                            gitStore.removeWorktree(row.path)
+                          },
+                        },
+                        h(IconClose, { size: 13 }),
+                      ),
+                ),
+              )
+            }),
+          )
+
+  return h('div', { className: 'gmg-group' }, head, body, form)
 }
 
 /**
@@ -282,13 +596,181 @@ function GitTabTitle(props) {
 }
 
 /**
+ * The branch pill and its menu.
+ *
+ * A native `<select>` used to do this job from under the pill, and the list it
+ * opened was drawn by the OS: a white sheet with a system-blue selection on
+ * top of a dark panel. The menu here is the same floating surface the hover
+ * cards use — theme tokens, rounded corners, the panel's own shadow — and it
+ * marks the current branch instead of leaving the reader to spot which row is
+ * already active.
+ *
+ * @param props - `{ status, branches, t }`.
+ * @returns the pill with its menu.
+ */
+function BranchPicker(props) {
+  const { status, branches, t } = props
+  const [open, setOpen] = useState(false)
+  const [anchor, setAnchor] = useState(null)
+  const [active, setActive] = useState(0)
+  const pill = useRef(null)
+  const menu = useRef(null)
+  const rows = branches?.branches ?? []
+  const current = status.branch ?? null
+  const names = rows.map((row) => row.name)
+
+  const close = () => setOpen(false)
+  const pick = (name) => {
+    close()
+    if (name !== current) gitStore.switchBranch(name)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (event) => {
+      const target = event.target
+      if (menu.current?.contains(target) === true) return
+      if (pill.current?.contains(target) === true) return
+      close()
+    }
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        close()
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setActive((index) => Math.min(names.length - 1, index + 1))
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setActive((index) => Math.max(0, index - 1))
+        return
+      }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        const name = names[active]
+        if (name !== undefined) pick(name)
+      }
+    }
+    const onResize = () => close()
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open, active, names.length])
+
+  // Keep the arrow-key highlight inside the visible part of a long list.
+  useEffect(() => {
+    if (!open) return
+    menu.current?.querySelector('.gmg-branchitem.is-active')?.scrollIntoView?.({ block: 'nearest' })
+  }, [open, active])
+
+  const toggle = () => {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    // The menu is portalled, so the pill's box is captured now: by the time the
+    // menu renders the button may already have been scrolled or re-styled.
+    setAnchor(pill.current?.getBoundingClientRect() ?? null)
+    setActive(Math.max(0, names.indexOf(current)))
+    setOpen(true)
+  }
+
+  return h(
+    'div',
+    { className: 'gmg-branchpick' },
+    h(
+      'button',
+      {
+        ref: pill,
+        type: 'button',
+        className: `gmg-branch${current === null ? ' is-detached' : ''}${open ? ' is-open' : ''}`,
+        title: t('switchBranch'),
+        'aria-haspopup': 'listbox',
+        'aria-expanded': open,
+        onClick: toggle,
+      },
+      h(IconBranch, { size: 13 }),
+      h('span', { className: 'gmg-branch-name' }, current ?? t('detached')),
+      h(IconChevronDown, { size: 10 }),
+    ),
+    open && anchor !== null
+      ? h(BranchMenu, { anchor, rows, current, active, onHover: setActive, onPick: pick, menuRef: menu, t })
+      : null,
+  )
+}
+
+/**
+ * The branch list, portalled so the panel's scroll box cannot clip it.
+ *
+ * @param props - `{ anchor, rows, current, active, onHover, onPick, menuRef, t }`.
+ * @returns the menu.
+ */
+function BranchMenu(props) {
+  const { anchor, rows, current, active, onHover, onPick, menuRef, t } = props
+  const [style, setStyle] = useState({ left: -9999, top: 0, visibility: 'hidden' })
+  useLayoutEffect(() => {
+    const element = menuRef.current
+    if (element === null || anchor === null) return
+    const rect = element.getBoundingClientRect()
+    const width = Math.min(300, Math.max(200, Math.round(anchor.width) || 0))
+    const below = anchor.bottom + 6
+    const fitsBelow = below + rect.height <= window.innerHeight - 8
+    setStyle({
+      left: Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)),
+      top: fitsBelow ? below : Math.max(8, anchor.top - rect.height - 6),
+      width,
+      visibility: 'visible',
+    })
+  }, [anchor, rows.length])
+  const list = h(
+    'div',
+    {
+      ref: menuRef,
+      className: 'gmg-branchmenu',
+      role: 'listbox',
+      'aria-label': t('switchBranch'),
+      style,
+    },
+    rows.length === 0
+      ? h('div', { className: 'gmg-branchmenu-empty' }, t('loading'))
+      : rows.map((row, index) =>
+          h(
+            'div',
+            {
+              key: row.name,
+              role: 'option',
+              'aria-selected': row.name === current,
+              className: `gmg-branchitem${row.name === current ? ' is-current' : ''}${index === active ? ' is-active' : ''}`,
+              title: row.upstream ?? row.name,
+              onMouseEnter: () => onHover(index),
+              onMouseDown: (event) => event.preventDefault(),
+              onClick: () => onPick(row.name),
+            },
+            h('span', { className: 'gmg-branchitem-name' }, row.name),
+            row.name === current ? h('span', { className: 'gmg-branchcheck' }, h(IconCheck, { size: 12 })) : null,
+          ),
+        ),
+  )
+  if (typeof reactDom?.createPortal !== 'function') return list
+  return reactDom.createPortal(list, document.body)
+}
+
+/**
  * The branch pill, the upstream tracking line, and the fetch/pull/push actions.
  * @param props - `{ status, t, busy }`.
  * @returns the branch bar element.
  */
 function BranchBar(props) {
-  const { status, t, busy } = props
-  const branches = useBranches(status, t)
+  const { status, t, busy, branches } = props
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState('')
 
@@ -300,44 +782,25 @@ function BranchBar(props) {
     'div',
     { className: 'gmg-branchbar' },
     h(
-      'span',
-      { className: `gmg-branch${status.branch === null ? ' is-detached' : ''}`, title: t('branch') },
-      h(IconBranch, { size: 13 }),
-      status.branch ?? t('detached'),
-      h(IconChevronDown, { size: 10 }),
-      h(
-        'select',
-        {
-          className: 'gmg-branch-select',
-          value: status.branch ?? '',
-          title: t('switchBranch'),
-          onChange: (event) => {
-            const next = event.target.value
-            if (next !== '' && next !== status.branch) gitStore.switchBranch(next)
-          },
-          style: {
-            position: 'absolute',
-            opacity: 0,
-            width: '100%',
-            height: '100%',
-            inset: 0,
-            cursor: 'pointer',
-            border: 'none',
-          },
-        },
-        status.branch === null ? h('option', { value: '' }, t('detached')) : null,
-        (branches?.branches ?? []).map((branch) => h('option', { key: branch.name, value: branch.name }, branch.name)),
-      ),
+      HoverTarget,
+      { card: status.branch === null ? null : h(BranchHoverCard, { branch: status.branch, t }) },
+      h(BranchPicker, { status, branches, t }),
     ),
     upstream === null
-      ? h('span', { className: 'gmg-track' }, t('notPublished'))
+      ? h('span', { className: 'gmg-track', title: t('notPublished') }, h(IconCloud, { size: 12 }), t('notPublished'))
       : h(
           'span',
-          { className: 'gmg-track', title: upstream },
+          {
+            // The relationship to the server, in colour: level with it, ahead of
+            // it, behind it, or both at once. The arrows carry the same fact.
+            className: `gmg-track is-${ahead > 0 && behind > 0 ? 'diverged' : ahead > 0 ? 'ahead' : behind > 0 ? 'behind' : 'synced'}`,
+            title: `${upstream} · ${t('refRemote')}`,
+          },
           h(IconCloud, { size: 12 }),
           upstream,
           ahead > 0 ? h('span', { className: 'gmg-ahead' }, `↑${ahead}`) : null,
           behind > 0 ? h('span', { className: 'gmg-behind' }, `↓${behind}`) : null,
+          ahead === 0 && behind === 0 ? h('span', { className: 'gmg-synced' }, '✓') : null,
         ),
     h('span', { className: 'gmg-spacer' }),
     h(
@@ -408,29 +871,6 @@ function BranchBar(props) {
 }
 
 /**
- * Read the branch list lazily and keep it fresh when HEAD moves.
- * @param status - the current status snapshot.
- * @param t - translator (unused, kept for symmetry).
- * @returns `{ branches }` or null before the first read.
- */
-function useBranches(status, t) {
-  const [list, setList] = useState(null)
-  const head = `${status.branch ?? ''}:${status.oid ?? ''}`
-  useEffect(() => {
-    let live = true
-    callHost('branches', { path: status.path })
-      .then((value) => {
-        if (live) setList(value)
-      })
-      .catch(() => {})
-    return () => {
-      live = false
-    }
-  }, [status.path, head])
-  return list
-}
-
-/**
  * Commit message plus the staged/everything choice and the amend toggle.
  * @param props - `{ status, state, t, busy }`.
  * @returns the commit box element.
@@ -439,11 +879,21 @@ function CommitBox(props) {
   const { status, state, t, busy } = props
   const stagedCount = status.staged.length
   const changeCount = status.changes.length
-  const canCommit = state.message.trim() !== '' && (stagedCount > 0 || state.stageAll) && busy === null
+  const blocked = status.conflicts.length > 0
+  const canCommit = state.message.trim() !== '' && (stagedCount > 0 || state.stageAll) && busy === null && !blocked
 
   const submit = () => {
     if (!canCommit) return
     gitStore.commit()
+  }
+
+  const toggleAmend = (checked) => {
+    gitStore.setFlag('amend', checked)
+    // Preview the message an amend would replace, but never overwrite a draft.
+    if (checked && gitStore.get().message.trim() === '') {
+      const head = gitStore.get().log[0]
+      if (typeof head?.subject === 'string' && head.subject !== '') gitStore.setMessage(head.subject)
+    }
   }
 
   return h(
@@ -482,10 +932,11 @@ function CommitBox(props) {
           type: 'checkbox',
           checked: state.amend,
           disabled: !status.oid,
-          onChange: (event) => gitStore.setFlag('amend', event.target.checked),
+          onChange: (event) => toggleAmend(event.target.checked),
         }),
         t('amend'),
       ),
+      blocked ? h('span', { className: 'gmg-hint gmg-conflict-hint' }, t('conflictBlockHint')) : null,
       h('span', { className: 'gmg-spacer' }),
       h(
         'span',
@@ -500,7 +951,9 @@ function CommitBox(props) {
           type: 'button',
           disabled: !canCommit,
           onClick: submit,
-          title: t('commitHint'),
+          // A disabled button with nothing to say is a dead end: name the
+          // reason it cannot be pressed, while its label stays readable.
+          title: canCommit ? t('commitHint') : blocked ? t('conflictBlockHint') : state.message.trim() === '' ? t('commitNeedsMessage') : t('commitNeedsStaged'),
         },
         busy === 'commit' ? h(IconRefresh, { size: 13 }) : h(IconCheck, { size: 13 }),
         t('commit'),
@@ -516,13 +969,34 @@ function CommitBox(props) {
  */
 function ChangeGroup(props) {
   const { title, rows, staged, t, empty, conflicts } = props
+  // The list is the tallest thing in the column and the one readers fold away
+  // most often: one click on the header collapses it, and the count stays
+  // visible so a folded group still says how much is inside.
+  const [collapsed, setCollapsed] = useState(false)
   if (rows.length === 0 && empty === null) return null
+  const body =
+    rows.length === 0
+      ? h('div', { className: 'gmg-empty' }, empty)
+      : h('div', { className: 'gmg-files' }, rows.map((row) => h(FileRow, { key: `${staged ? 's' : 'w'}:${row.path}`, row, staged, t, conflicts })))
   return h(
     'div',
-    { className: 'gmg-group' },
+    { className: collapsed ? 'gmg-group is-collapsed' : 'gmg-group' },
     h(
       'div',
       { className: 'gmg-group-head' },
+      h(
+        'button',
+        {
+          className: 'gmg-collapse',
+          type: 'button',
+          title: collapsed ? t('expandGroup') : t('collapseGroup'),
+          'aria-label': collapsed ? t('expandGroup') : t('collapseGroup'),
+          'aria-expanded': collapsed === false,
+          disabled: rows.length === 0,
+          onClick: () => setCollapsed((value) => !value),
+        },
+        h(IconChevronDown, { size: 12 }),
+      ),
       title,
       h('span', { className: 'gmg-count' }, String(rows.length)),
       h('span', { className: 'gmg-spacer' }),
@@ -540,25 +1014,60 @@ function ChangeGroup(props) {
           )
         : null,
     ),
-    rows.length === 0
-      ? h('div', { className: 'gmg-empty' }, empty)
-      : h('div', { className: 'gmg-files' }, rows.map((row) => h(FileRow, { key: `${staged ? 's' : 'w'}:${row.path}`, row, staged, t, conflicts }))),
+    collapsed ? null : body,
   )
 }
 
 /**
- * One changed file, with its inline diff when open.
+ * The conflict summary strip: the blocked-commit explanation and the one way
+ * out of a merge that went wrong.
+ * @param props - `{ t, busy }`.
+ * @returns the strip element.
+ */
+function ConflictBar(props) {
+  const { t, busy } = props
+  return h(
+    'div',
+    { className: 'gmg-group gmg-conflict' },
+    h(
+      'div',
+      { className: 'gmg-group-head' },
+      h(IconAlert, { size: 13 }),
+      t('conflicts'),
+      h('span', { className: 'gmg-spacer' }),
+      h(
+        'button',
+        {
+          className: 'gmg-btn is-danger',
+          type: 'button',
+          disabled: busy !== null,
+          onClick: () => {
+            if (!window.confirm(t('mergeAbortConfirm'))) return
+            gitStore.abortMerge()
+          },
+        },
+        t('abortMerge'),
+      ),
+    ),
+    h('div', { className: 'gmg-hint', style: { padding: '0 12px 10px' } }, t('conflictBlockHint')),
+  )
+}
+
+/**
+ * One changed file. Clicking it opens that file's diff in the centre column.
  * @param props - `{ row, staged, t, conflicts }`.
  * @returns the row element.
  */
 function FileRow(props) {
   const { row, staged, t, conflicts } = props
   const state = useGitStore()
-  const open = state.expanded[row.path] === (staged ? 'staged' : 'worktree')
-  const diffKey = `${staged ? 's' : 'w'}:${row.path}`
-  const diff = state.diffs[diffKey]
   const { name, dir } = splitPath(row.path)
   const untracked = row.kind === 'untracked'
+  const openThis = () => {
+    if (typeof gmgSidebarBridge.openDiff === 'function') {
+      gmgSidebarBridge.openDiff({ path: state.path, file: row.path, staged, status: row.status })
+    }
+  }
 
   const discard = () => {
     const message = untracked ? t('deleteConfirm', { file: row.path }) : t('discardConfirm', { file: row.path })
@@ -585,7 +1094,25 @@ function FileRow(props) {
         h(IconMinus, { size: 13 }),
       ),
     )
-  } else if (!conflicts) {
+  } else if (conflicts) {
+    actions.push(
+      h(
+        'button',
+        {
+          key: 'resolve',
+          className: 'gmg-icon-btn',
+          type: 'button',
+          title: t('markResolved'),
+          'aria-label': t('markResolved'),
+          onClick: (event) => {
+            event.stopPropagation()
+            gitStore.fileAction('stage', [row.path], null)
+          },
+        },
+        h(IconCheck, { size: 13 }),
+      ),
+    )
+  } else {
     actions.push(
       h(
         'button',
@@ -626,19 +1153,19 @@ function FileRow(props) {
     h(
       'div',
       {
-        className: `gmg-file${open ? ' is-open' : ''}`,
+        className: 'gmg-file',
         role: 'button',
         tabIndex: 0,
-        title: row.path,
-        onClick: () => gitStore.toggleFile(row.path, staged),
+        title: `${row.path} — ${t('openDiffHint')}`,
+        onClick: openThis,
         onKeyDown: (event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
-            gitStore.toggleFile(row.path, staged)
+            openThis()
           }
         },
       },
-      h('span', { className: 'gmg-file-chevron' }, open ? h(IconChevronDown, { size: 11 }) : h(IconChevronRight, { size: 11 })),
+      h('span', { className: 'gmg-file-chevron' }, h(IconChevronRight, { size: 11 })),
       h('span', { className: 'gmg-status', style: { color: statusColor(row.status) }, title: t('status') }, statusGlyph(row.status)),
       h(
         'span',
@@ -650,53 +1177,7 @@ function FileRow(props) {
       row.deletions > 0 ? h('span', { className: 'gmg-del-count gmg-stats' }, `-${row.deletions}`) : null,
       h('span', { className: 'gmg-actions' }, ...actions),
     ),
-    open ? h(DiffView, { diff, t }) : null,
   )
-}
-
-/**
- * One unified diff, coloured line by line.
- * @param props - `{ diff, t }`.
- * @returns the diff element or null.
- */
-function DiffView(props) {
-  const { diff, t } = props
-  if (diff === undefined) return null
-  if (diff.loading) return h('div', { className: 'gmg-diff' }, h('div', { className: 'gmg-diff-note' }, t('loadingDiff')))
-  if (diff.error !== undefined) return h('div', { className: 'gmg-diff' }, h('div', { className: 'gmg-diff-note' }, diff.error))
-  if (diff.binary) return h('div', { className: 'gmg-diff' }, h('div', { className: 'gmg-diff-note' }, t('binaryDiff')))
-  const patch = String(diff.patch ?? '')
-  if (patch.trim() === '') return h('div', { className: 'gmg-diff' }, h('div', { className: 'gmg-diff-note' }, t('emptyDiff')))
-
-  const lines = patch.split('\n')
-  return h(
-    'div',
-    { className: 'gmg-diff' },
-    h(
-      'pre',
-      null,
-      lines.map((line, index) =>
-        h(
-          'span',
-          { key: index, className: `gmg-diff-line ${diffClass(line)}` },
-          line === '' ? ' ' : line,
-        ),
-      ),
-    ),
-  )
-}
-
-/**
- * Classify one patch line.
- * @param line - the raw line.
- * @returns the CSS modifier for the line.
- */
-function diffClass(line) {
-  if (line.startsWith('@@')) return 'is-hunk'
-  if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file') || line.startsWith('similarity') || line.startsWith('rename')) return 'is-meta'
-  if (line.startsWith('+')) return 'is-add'
-  if (line.startsWith('-')) return 'is-del'
-  return ''
 }
 
 /**
@@ -718,17 +1199,22 @@ function GithubCard(props) {
   const github = state.github
   const branch = state.status?.branch ?? null
 
-  // First look: resolve the remote and pull the repo facts once a token exists.
+  // Resolve the remote, then the repository facts, then the first pull list —
+  // each step needs the previous one's answer, and stopping at the repo facts
+  // left the Pull requests tab saying "reading…" until it was clicked.
   useEffect(() => {
     if (state.path === null) return
     if (github === null) {
       gitStore.loadGithub('repo')
       return
     }
-    if (github.connected === true && github.authorized === true && github.repo === undefined) {
+    if (github.connected !== true || github.authorized !== true) return
+    if (github.repo === undefined) {
       gitStore.loadGithub('repo')
+      return
     }
-  }, [state.path, github?.connected, github?.authorized])
+    if (github.pulls === undefined) gitStore.loadGithub('pulls')
+  }, [state.path, github?.connected, github?.authorized, github?.repo, github?.pulls])
 
   if (github === null) {
     return h('div', { className: 'gmg-card' }, h('div', { className: 'gmg-empty' }, t('githubLoading')))
@@ -812,6 +1298,18 @@ function GithubCard(props) {
             }),
             h('button', { className: 'gmg-btn is-primary', type: 'button', onClick: () => gitStore.saveToken(tokenDraft) }, t('save')),
             h('a', { className: 'gmg-btn is-ghost', href: 'https://github.com/settings/tokens', target: '_blank', rel: 'noreferrer' }, h(IconExternal, { size: 12 }), t('createToken')),
+          )
+        : null,
+      github.reason === 'error'
+        ? h(
+            'div',
+            { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+            h('span', { className: 'gmg-hint', style: { flex: 1 } }, github.error ?? ''),
+            h(
+              'button',
+              { className: 'gmg-btn', type: 'button', disabled: busy !== null, onClick: () => gitStore.loadGithub('repo') },
+              t('retryGithub'),
+            ),
           )
         : null,
       h('div', { className: 'gmg-hint' }, t('tokenScope')),

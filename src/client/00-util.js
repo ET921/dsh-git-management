@@ -9,10 +9,25 @@
 /** React, from the shell's module table. */
 const react = require('react')
 
+/**
+ * Portals, when the shell's module table exposes `react-dom`.
+ *
+ * It is part of this build's frozen table, but the whole bundle dies if one
+ * `require` throws, so a host that does not expose it simply renders the hover
+ * card in place (fixed positioning needs no portal to be correct).
+ */
+const reactDom = (() => {
+  try {
+    return require('react-dom')
+  } catch {
+    return null
+  }
+})()
+
 /** Terse hyperscript; this file set is JSX-free so the build needs no compiler. */
 const h = react.createElement
 
-const { useCallback, useEffect, useMemo, useRef, useState } = react
+const { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } = react
 
 /** Module id: the bundle's id and (by the plugin's own choice) its tab id. */
 const PLUGIN_ID = 'dsh-git-management'
@@ -127,6 +142,54 @@ async function callHost(action, params = {}) {
 }
 
 /**
+ * A comparable form of one filesystem path: forward slashes, no trailing
+ * slash, folded case — the same rule the host applies when it matches a
+ * worktree row against the panel's current directory.
+ * @param path - the raw path.
+ * @returns the comparable key.
+ */
+function pathKey(path) {
+  return String(path ?? '')
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+}
+
+/**
+ * The bridge to the client's workspace services, installed by the plugin.
+ *
+ * Opening a worktree "as a workspace" needs `ctx.workspaces` + `ctx.uiWorkspace`,
+ * which only the plugin's apply sees; components reach it through this slot
+ * instead of receiving services as props.
+ */
+let gmgWorkspaceBridge = null
+
+/**
+ * The right column's tab openers, installed by the plugin. Clicking a file
+ * opens a diff tab and clicking a commit opens a commit tab, both in the same
+ * column, so the list and the conversation stay exactly where they were.
+ */
+let gmgSidebarBridge = { openDiff: null, openCommit: null }
+
+/**
+ * Whether this GUI can open a directory as a workspace.
+ * @returns true when the bridge is installed.
+ */
+function canOpenWorkspace() {
+  return gmgWorkspaceBridge !== null
+}
+
+/**
+ * Create (idempotently) and open a workspace for one directory.
+ * @param path - the directory.
+ * @returns the workspace view, or null when unavailable.
+ */
+async function openAsWorkspace(path) {
+  if (gmgWorkspaceBridge === null) return null
+  return gmgWorkspaceBridge(path)
+}
+
+/**
  * Split a repository-relative path into the file name and its directory.
  * @param path - repository-relative path.
  * @returns `{ name, dir }`.
@@ -165,6 +228,10 @@ function relativeTime(iso, locale) {
 
 /**
  * The panel's single colour for one porcelain status letter.
+ *
+ * These read the panel's own saturated marks rather than the theme's state
+ * accents: at 11px on a busy list the calmer tokens were barely distinct.
+ *
  * @param status - M, A, D, R, C, U or T.
  * @returns a CSS custom-property name.
  */
@@ -172,15 +239,15 @@ function statusColor(status) {
   switch (status) {
     case 'A':
     case 'U':
-      return 'var(--dsw-alias-state-success-primary)'
+      return 'var(--gmg-ok)'
     case 'D':
-      return 'var(--dsw-alias-state-error-primary)'
+      return 'var(--gmg-bad)'
     case 'M':
     case 'T':
-      return 'var(--dsw-alias-state-warn-primary)'
+      return 'var(--gmg-warn)'
     case 'R':
     case 'C':
-      return 'var(--dsw-alias-brand-primary)'
+      return 'var(--gmg-local)'
     default:
       return 'var(--dsw-alias-label-secondary)'
   }

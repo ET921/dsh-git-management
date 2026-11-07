@@ -38,13 +38,18 @@
 面板在**右側邊欄**，跟「工作區文件」「新建終端」是同一組卡片（右側邊欄的開始頁），點卡片就開一個 Git 分頁。
 
 - **右側邊欄卡片與分頁**：`sidebarRightTabs` 註冊一個 `git` 型別 → 開始頁多一張卡片；分頁晶片顯示分支圖示、標題與待處理檔案數。
-- **分支列**：目前分支（點擊可切換）、上游、`↑ahead ↓behind`、Fetch／Pull（`--ff-only`）／Push（首次自動 `-u origin`）、新建分支。
-- **提交框**：訊息、`Ctrl+Enter` 提交、全部暫存、amend、已暫存/未暫存計數。
-- **變更清單**：已暫存 / 更改 / 衝突三組，逐檔 `+12 -3`，hover 出現暫存、取消暫存、放棄、刪除未追蹤檔（有確認）。
-- **行內差異**：點檔案展開 unified diff，`+`/`-`/hunk 上色。
-- **歷史**：最近提交（sha、主旨、作者、相對時間），可展開全部。
-- **GitHub**：遠端解析（ssh/https 皆可）、星標/復刻/issue 數、在瀏覽器開啟、PR 清單、Issue 清單、從目前分支建立 PR。
+- **分支列**：目前分支（點擊可切換）、上游、`↑ahead ↓behind`、Fetch／Pull（`--ff-only`）／Push（首次自動 `-u origin`）、新建分支。detached HEAD 下推送會直接說明原因，不會組出 `origin null`。
+- **提交框**：訊息、`Ctrl+Enter` 提交、全部暫存、amend（勾選時把上次提交的訊息帶進輸入框預覽）、已暫存/未暫存計數。**有未解決的衝突時提交鍵停用**，並在下方式說明。
+- **變更清單**：已暫存 / 更改 / 衝突三組，每組標頭左側有**收合箭頭**（收起來後仍看得到該組檔數），逐檔 `+12 -3`，hover 出現暫存、取消暫存、放棄、刪除未追蹤檔（有確認）。衝突檔多一顆「標記為已解決」。
+- **點檔案 → 在側邊欄新開一個「檔案差異」分頁**：變更清單與對話都留在原位，diff 自己是一個分頁（晶片顯示檔名）：雙欄行號、統一／並排切換、上一個／下一個檔案、已暫存⇄工作區切換、`Esc`／返回關閉分頁。分頁標頭直接有「暫存」與「放棄／刪除」，review 完不必回到清單；衝突檔會顯示「有未解決的衝突」而不是畫錯行號。
+- **hover 詳情卡**：滑鼠停在提交上顯示 sha、作者、相對時間、訊息、`N 個檔案 +X −Y` 與「在 GitHub 開啟」；停在分支上顯示上游、領先/落後與最後一次提交。作者一律先找 GitHub 帳號，**不必等推送**：已推送的提交由 GitHub 直接回答；還在本機的提交則用它的作者信箱換帳號（自己的信箱＝你授權的帳號，別人的信箱＝GitHub commit 搜尋），兩者都查不到才回退 git 名稱。卡片一律開在欄的**左側**、右緣距欄 12px，寧可蓋住對話也不壓住你正在指的那一行；高度跟著內容不設上限（長內文不截斷），只有高過視窗時才在最上緣固定並捲動。停留約 280ms 才出現，且不可點，不影響原本的點擊行為。
+- **歷史＋分支軌道**：左邊是提交列（主旨＋ref 徽章，不再顯示 sha——sha 在 hover 卡裡），右邊是 SVG 畫的分支軌道（lane）：每條未合併的線一欄，merge 畫成彎出去的邊，有 ref 的提交是實心點。資料來自 `git log --all --topo-order`（含 `%P` 父提交與 `%D` ref），所以**所有分支的活動**都在同一張圖上，不只是當前分支（含 fetch 下來、只存在 `origin/*` 上的提交）。預設顯示 10 筆，可展開到 40 筆。見 [src/client/16-graph.js](src/client/16-graph.js)。
+- **點一列提交 → 側邊欄新開一個「提交差異」分頁**：跟 Cursor 的歷史一樣，列本身就是入口。每個檔案是一個區塊、**竪著排列**，標頭是路徑、狀態與 `+N −N`（改名顯示 `← 舊路徑`），標頭在捲動時**吸頂**，所以滑到哪裡都知道自己在看哪個檔；點標頭可單獨收合，另有一鍵的「展開全部／收合全部」。內容**只畫變更的 hunk**（前後三行上下文），不載入全文——這正是「僅變更」的意思。merge 依**第一父提交**畫，和二進位檔的統計口徑一致；二進位檔只標一個「二進位」而不是畫錯行號。每次點擊都是**獨立分頁**（`multiple: true`），兩個提交可以並排看，清單與對話都不會被換掉。單一提交最多讀 60 個檔案的 patch，超過時列表仍會說明總數；資料按 `repo#sha` 快取，重開同一個提交不會再問 git。設計與取捨見 [docs/commit-diff.md](docs/commit-diff.md)。
+- **本機 vs 遠端，用顏色分**：ref 徽章依「在哪台機器」上色，並各配一個圖示（色盲也分得出來）——你目前的檢出是**實心藍底＋實心點**、其他本機分支是**淡藍底＋分支圖示**、遠端分支（`origin/*`）是**飽和紫＋雲**、標籤是**琥珀＋標籤圖示**。分支列的 upstream 也依關係上色：同步✓綠、領先↑藍、落後↓琥珀、分叉↑↓紅。色票（`--gmg-*`）是面板自帶的飽和色，因為主題 accent 對 10px 徽章太淡；淺色主題另有一組較深的同色相，兩邊對比都 ≥4.8:1，車道線則用固定的高飽和八色。
+- **GitHub**：遠端解析（ssh/https 皆可）、星標/復刻/issue 數、在瀏覽器開啟、PR 清單、Issue 清單、從目前分支建立 PR。GHES（非 github.com 的 origin）會自動走 `<host>/api/v3`，也可用 `GITHUB_API_URL` 覆蓋。
+- **工作樹**：列出這份 repo 的所有 checkout（含 DSH 自己的 `.agents/worktrees/*` 與你手動加的），每列顯示分支、相對路徑、髒污計數與 `主` 標記；可以一鍵把面板切過去、開成 DSH 工作區、或在確認後移除。見 [docs/worktrees.md](docs/worktrees.md)。
 - **多工作區**：下拉切換 DSH 工作區（自動記住上次選擇；非 Git 目錄提供「初始化倉庫」）。
+- **回饋與狀態**：錯誤與成功提示 sticky 在頂端，捲動也看得見；背景輪詢只在沒有其他操作時跑，而且只重讀 `status`，不會清掉你剛看到的錯誤；每個操作有自己的 token，重疊時 spinner 不會提早消失；讀不到工作區列表時給的是「重新讀取」而不是假裝沒有倉庫。
 
 ## 三、故意沒做的事（以及原因）
 
@@ -87,12 +92,18 @@ C:\Users\user\AppData\Roaming\dsh-desktop\harness\profiles\web\
 
 ```bash
 npm run build        # 產出 lib/
-npm run verify       # 42 項：Git 引擎 + 動作表 + 打包檢查（真的開一個臨時 repo 跑）
-npm run test:render  # 27 項：jsdom + 真的 React，把 lib/client.js 掛起來渲染面板
+npm run verify       # 143 項：Git 引擎 + 動作表 + 邊界狀態（bare／detached／merge／衝突）+ 提交差異 + HTTP 路由守衛 + 打包檢查
+npm run test:render  # 175 項：jsdom + 真的 React，掛起 lib/client.js 渲染面板、檔案 diff 與提交 diff 分頁
 ```
 
-- `scripts/verify.mjs`：對真的 `git` 二進位驗證 status/stage/commit/diff/log/branches/remote 與錯誤處理，含路徑有空白的檔案。
-- `scripts/render-test.mjs`：載入真正的 `lib/client.js`、呼叫 `apply(ctx)`、檢查兩個 slot 註冊、渲染面板、點一個檔案確認 diff 被請求並上色。
+- `scripts/verify.mjs`：對真的 `git` 二進位驗證 status/stage/commit/diff/log/branches/remote 與錯誤處理，含路徑有空白、含 `[` 的檔名，以及 bare repo、detached HEAD、merge 統計、`merge --abort`；提交差異另有自己的 repo，驗 root commit、單行修改只帶 hunk、改名（舊路徑，含改名後又改內容）、刪除、二進位、只改 mode、merge 的第一父提交、空提交，以及超過 60 檔時只讀前 60 個 patch；另有一段直接驅動 `/dsh-git/api` 的 handler，驗證 Content-Type 與工作區白名單。
+- `scripts/render-test.mjs`：載入真正的 `lib/client.js`、呼叫 `apply(ctx)`、檢查兩個 slot 註冊、渲染面板、點一個檔案確認 diff 被請求並上色；點一列提交確認開的是 `git-commit` 分頁、參數是該提交、分頁把檔案竪著畫出來（含改名來源與截斷說明）、可折疊、可返回、`Esc` 關閉、隱藏分頁不理會 `Esc`、兩個分頁開同一提交只讀一次；另有衝突狀態（擋提交、標記解決、中止合併）與差異頁動作列的斷言。
+
+## 六、安全邊界
+
+- `/dsh-git/api` 只接受 `content-type: application/json`——其他型別回 415，這會強制瀏覽器先送 preflight，於是外部頁面無法用「簡單請求」驅動本機 git。
+- 請求裡的 `path` 必須落在已註冊的工作區內（或其子目錄），否則回 403；宿主沒有工作區清單時維持舊行為，不把面板鎖死。
+- 所有檔案路徑都以 `:(literal)` pathspec 傳給 git，檔名含 `[ ] ? *` 時也只會動到那一個檔（見 `scripts/verify.mjs` 的 bracket 測試）。
 
 ## 六、程式結構
 
@@ -102,16 +113,25 @@ src/
   actions.js        動作表：action 名稱 → argv／GitHub REST，唯一的命令組裝處
   git.js            Git 引擎（可注入 exec，無 DSH 依賴）＋ status/diff 解析
   client/
-    00-util.js      React、host 呼叫、格式化
+    00-util.js      React、host 呼叫、格式化、layout/workspace 橋
     10-store.js     面板狀態（跨掛載保存）與所有操作
+    15-diff.js      中央 diff 的目標狀態＋patch 解析（行號、並排配對）
+    16-graph.js     歷史卡右側的分支軌道（lane 配置＋SVG）
+    17-commit-diff.js 提交分頁的資料（按 repo#sha 快取、LRU、patch 解析）
     20-icons.js     手繪 SVG 圖示
     30-style.js     主題 token 驅動的 CSS
-    40-panel.js     面板 UI（分支列、提交框、檔案列、diff、歷史、GitHub；`compact` 為右欄窄版）
-    50-plugin.js    字典 + 分頁型別（`sidebarRightTabs`）與兩個 slot 註冊
+    40-panel.js     面板 UI（分支列、提交框、檔案列、工作樹、歷史卡、GitHub；`compact` 為右欄窄版）
+    45-diff-panel.js 中央欄的 diff 面板（統一／並排、上一個／下一個）
+    46-hover.js     提交／分支的 hover 詳情卡（portal、延遲、快取）
+    47-commit-panel.js 提交分頁的面板（標頭、每檔一區塊、折疊、吸頂）
+    50-plugin.js    字典 + 分頁型別（`sidebarRightTabs`，含 `multiple` 的提交分頁）+ slot 註冊
 scripts/
   build.mjs         無 bundler：ESM 直送 + ModuleLoader 包裝
   verify.mjs        Git 引擎驗證
   render-test.mjs   jsdom 渲染驗證
+docs/
+  worktrees.md      工作樹功能的設計與取捨（含被 grill 的問題）
+  commit-diff.md    提交差異分頁的設計與取捨（含被 grill 的問題）
 ```
 
 ## 七、已知邊界
