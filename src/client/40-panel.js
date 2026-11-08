@@ -23,20 +23,148 @@ function tr(key, vars) {
 }
 
 /**
+ * The one-line next step for a failure.
+ *
+ * The envelope's stable `code` (plan-v2 §3.1) is what makes this possible: the
+ * message says what git refused, the code says what to do about it. Two shape
+ * checks cover the cases git has no code for — a dirty worktree refusing to
+ * move, and a hook rejecting the commit.
+ *
+ * @param state - the store snapshot (`error`, `errorCode`, `errorDetails`).
+ * @param t - the locale.
+ * @returns the hint, or null when the panel has nothing better to add.
+ */
+function errorNextStep(state, t) {
+  const code = state.errorCode
+  const stderr = String(state.errorDetails?.stderr ?? '')
+  const message = String(state.error ?? '')
+  if (code === 'non-fast-forward') return t('errNonFastForward')
+  if (code === 'unresolved-conflicts') return t('conflictBlockHint')
+  if (code === 'operation-in-progress') return t('errOperation')
+  if (code === 'bare-readonly') return t('bareReadonlyHint')
+  if (code === 'unknown-action') return t('errStaleHost')
+  if (code === 'timeout') return t('errTimeout')
+  if (code === 'locked') return t('errLocked')
+  if (code === 'auth' || code === 'rate-limit' || code === 'github-error') return t('errAuth')
+  if (code === 'unsafe-path' || code === 'invalid-argument') return t('errArgument')
+  if (code === 'not-repo') return t('notARepo')
+  if (/would be overwritten|local changes/i.test(`${stderr}\n${message}`)) return t('errDirtySwitch')
+  if (/hook/i.test(stderr)) return t('errHook')
+  return null
+}
+
+/**
+ * The failure line: message, the next step, and — when the host had a command
+ * to show — the argv/stderr tail folded away behind “详情”, plus a copy button
+ * because the fastest fix is usually pasting that command into a terminal.
+ *
+ * @param props - `{ state, t }` from the panel store.
+ * @returns the notice element.
+ */
+function ErrorNotice(props) {
+  const { state, t } = props
+  const [copied, setCopied] = useState(false)
+  const timer = useRef(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+  const details = state.errorDetails
+  const argv = Array.isArray(details?.argv) ? details.argv.map((part) => String(part)) : null
+  const stderr = typeof details?.stderr === 'string' && details.stderr.trim() !== '' ? details.stderr : null
+  const exitCode = typeof details?.exitCode === 'number' ? details.exitCode : null
+  const hasDetails = argv !== null || stderr !== null || exitCode !== null
+  const next = errorNextStep(state, t)
+  const copy = async () => {
+    const diagnostic = [
+      argv === null ? null : argv.join(' '),
+      exitCode === null ? null : `exit ${exitCode}`,
+      state.errorCode === null ? null : `code: ${state.errorCode}`,
+      `error: ${String(state.error ?? '')}`,
+      stderr,
+    ]
+      .filter((line) => line !== null && line !== '')
+      .join('\n')
+    if (await copyToClipboard(diagnostic)) {
+      setCopied(true)
+      window.clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => setCopied(false), 1500)
+    }
+  }
+  return h(
+    'div',
+    { className: 'gmg-notice is-error', key: 'error' },
+    h(IconAlert, { size: 14 }),
+    h(
+      'div',
+      { className: 'gmg-err-main', style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' } },
+      h('span', null, state.error),
+      next === null ? null : h('span', { className: 'gmg-hint gmg-err-next' }, next),
+    ),
+    hasDetails
+      ? h(
+          'button',
+          {
+            className: 'gmg-btn is-ghost',
+            type: 'button',
+            'aria-expanded': state.errorOpen === true,
+            onClick: () => gitStore.toggleErrorOpen(),
+          },
+          state.errorOpen === true ? t('errorHideDetails') : t('errorDetails'),
+        )
+      : null,
+    hasDetails
+      ? h(
+          'button',
+          { className: 'gmg-btn is-ghost', type: 'button', onClick: copy, title: t('errorCopyHint') },
+          copied ? t('errorCopied') : t('errorCopy'),
+        )
+      : null,
+    h(
+      'button',
+      { className: 'gmg-icon-btn', type: 'button', onClick: () => gitStore.dismiss(), title: t('dismiss') },
+      h(IconClose, { size: 13 }),
+    ),
+    state.errorOpen === true && hasDetails
+      ? h(
+          'div',
+          { className: 'gmg-err-details' },
+          argv === null ? null : h('div', { className: 'gmg-err-argv', title: argv.join(' ') }, argv.join(' ')),
+          exitCode === null ? null : h('div', { className: 'gmg-err-exit' }, t('errorExit', { code: exitCode })),
+          stderr === null ? null : h('pre', { className: 'gmg-err-stderr' }, stderr),
+        )
+      : null,
+  )
+}
+
+/**
  * The panel root: data loading, polling, and the page shell.
  * @param props - slot-injected props (`t` when the host provides it).
  * @returns the panel element.
  */
+/** Seconds a success notice sits before it fades (QA-E2); errors never fade. */
+const NOTICE_VISIBLE_MS = 3500
+
+/** Milliseconds the `.is-fading` transition is allowed to take before the
+ *  notice is dropped even if no `transitionend` arrives (plan-v2 S14). */
+const NOTICE_FADE_MS = 250
+
 function GitPanel(props) {
   const state = useGitStore()
   const t = typeof props?.t === 'function' ? props.t : tr
   const lang = typeof props?.lang === 'string' ? props.lang : currentLocale()
   const compact = props?.compact === true
   const [showAllHistory, setShowAllHistory] = useState(false)
+  const [noticeFading, setNoticeFading] = useState(false)
+  const pageRef = useRef(null)
 
   // First mount: read the workspace list and settle on a repository.
   useEffect(() => {
     if (!gitStore.get().ready) gitStore.loadRepos()
+  }, [])
+
+  // The panel remounts whenever the user switches the main column; a reader
+  // coming back should not have to wait for the next poll tick (poweruser G12).
+  useEffect(() => {
+    const current = gitStore.get()
+    if (current.ready && current.path !== null) gitStore.refresh()
   }, [])
 
   // Cheap, quiet polling while the panel is on screen: `git status` is the
@@ -56,6 +184,40 @@ function GitPanel(props) {
     }
   }, [])
 
+  // A success notice fades on its own; an error stays until dismissed.
+  // The notice element gets `.is-fading` (its CSS is design's `30-style.js`),
+  // and a fallback timer drops it even if jsdom-style worlds never fire
+  // `transitionend`.
+  useEffect(() => {
+    if (state.notice === null) {
+      setNoticeFading(false)
+      return undefined
+    }
+    let fadeTimer
+    const timer = window.setTimeout(() => {
+      setNoticeFading(true)
+      // `dismissNotice`, not `dismiss`: an error that landed during the fade
+      // must keep its line — the notice owns only its own removal.
+      fadeTimer = window.setTimeout(() => gitStore.dismissNotice(), NOTICE_FADE_MS)
+    }, NOTICE_VISIBLE_MS)
+    return () => {
+      window.clearTimeout(timer)
+      window.clearTimeout(fadeTimer)
+      setNoticeFading(false)
+    }
+  }, [state.notice])
+
+  // A pull that stopped on conflicts bumps `conflictFocusAt`; the group it
+  // produced is the next thing the reader needs, so bring it into view. The
+  // store never touches the DOM — the panel owns that half.
+  useEffect(() => {
+    if (state.conflictFocusAt === null) return
+    const node = pageRef.current?.querySelector('.gmg-group.gmg-conflict')
+    if (node !== null && node !== undefined && typeof node.scrollIntoView === 'function') {
+      node.scrollIntoView({ block: 'nearest' })
+    }
+  }, [state.conflictFocusAt])
+
   const snapshot = state.status
   const repos = state.repos
   const gitRepos = repos.filter((repo) => repo.isRepo)
@@ -69,7 +231,14 @@ function GitPanel(props) {
       'div',
       { className: 'gmg-head-main' },
       h('div', { className: 'gmg-title' }, h(IconBranch, { size: 16 }), t('panelTitle')),
-      h('div', { className: 'gmg-sub' }, snapshot?.root ?? state.path ?? t('noRepo')),
+      h(
+        'div',
+        { className: 'gmg-sub' },
+        snapshot?.root ?? state.path ?? t('noRepo'),
+        // A bare repository has no worktree, so “stage/commit” here would be a
+        // promise the host cannot keep: say read-only once, up top (G4).
+        snapshot?.bare === true ? h('span', { className: 'gmg-badge gmg-bare', title: t('bareReadonlyHint') }, t('bareBadge')) : null,
+      ),
     ),
     h(
       'div',
@@ -107,6 +276,11 @@ function GitPanel(props) {
         },
         h(IconRefresh, { size: 15 }),
       ),
+      // “Updated …”. The 8-second poll re-renders the panel on every read, so
+      // this line keeps itself honest without a timer of its own (G12).
+      state.lastSyncedAt === null
+        ? null
+        : h('span', { className: 'gmg-meta gmg-last-sync' }, t('lastSynced', { ago: relativeTime(new Date(state.lastSyncedAt).toISOString(), lang) })),
       h(
         'button',
         {
@@ -124,26 +298,17 @@ function GitPanel(props) {
 
   const notices = []
   if (state.error !== null) {
-    notices.push(
-      h(
-        'div',
-        { className: 'gmg-notice is-error', key: 'error' },
-        h(IconAlert, { size: 14 }),
-        h('span', null, state.error),
-        h(
-          'button',
-          { className: 'gmg-icon-btn', type: 'button', onClick: () => gitStore.dismiss(), title: t('dismiss') },
-          h(IconClose, { size: 13 }),
-        ),
-      ),
-    )
+    notices.push(h(ErrorNotice, { key: 'error', state, t }))
   }
   if (state.notice !== null) {
+    // A warning owns the alert glyph and its own class: a green check over
+    // “merge conflicts” would read as if the pull had succeeded.
+    const tone = state.noticeWarning === true ? 'is-warn' : 'is-ok'
     notices.push(
       h(
         'div',
-        { className: 'gmg-notice is-ok', key: 'notice' },
-        h(IconCheck, { size: 14 }),
+        { className: noticeFading ? `gmg-notice ${tone} is-fading` : `gmg-notice ${tone}`, key: 'notice' },
+        state.noticeWarning === true ? h(IconAlert, { size: 14 }) : h(IconCheck, { size: 14 }),
         h('span', null, state.notice),
         h(
           'button',
@@ -222,6 +387,15 @@ function GitPanel(props) {
         h('div', { className: 'gmg-hint' }, t('initHint')),
       ),
     )
+  } else if (snapshot.bare === true) {
+    // Read-only: the branch bar still earns its place (fetch and history work),
+    // but a commit box and staging groups would only be dead furniture.
+    body = h(
+      'div',
+      { className: 'gmg-card' },
+      h(BranchBar, { status: snapshot, t, busy, branches: state.branches }),
+      h('div', { className: 'gmg-empty gmg-bare-note' }, t('bareReadonlyHint')),
+    )
   } else {
     body = h(
       'div',
@@ -231,7 +405,15 @@ function GitPanel(props) {
       h(ChangeGroup, { title: t('staged'), rows: snapshot.staged, staged: true, t, empty: null }),
       h(ChangeGroup, { title: t('changes'), rows: snapshot.changes, staged: false, t, empty: t('noChanges') }),
       snapshot.conflicts.length > 0
-        ? h(ChangeGroup, { title: t('conflicts'), rows: snapshot.conflicts, staged: false, conflicts: true, t, empty: null })
+        ? h(ChangeGroup, {
+            title: t('conflicts'),
+            rows: snapshot.conflicts,
+            staged: false,
+            conflicts: true,
+            t,
+            empty: null,
+            focusAt: state.conflictFocusAt,
+          })
         : null,
       snapshot.conflicts.length > 0 ? h(ConflictBar, { t, busy }) : null,
     )
@@ -257,7 +439,10 @@ function GitPanel(props) {
   return h(
     'div',
     { className: `gmg-root${compact ? ' is-compact' : ''}` },
-    h('div', { className: 'gmg-page' }, header, ...notices, body, h(WorktreeSection, { state, t, busy, isRepo }), history, github),
+    // The notice slice is one keyed slot: without it a notice appearing shifts
+    // every unkeyed sibling by one index, and React remounts the whole card
+    // (folded groups pop open, DOM handles go stale). The Fragment renders nothing.
+    h('div', { className: 'gmg-page', ref: pageRef }, header, h(Fragment, { key: 'notices' }, ...notices), body, h(WorktreeSection, { state, t, busy, isRepo }), history, github),
   )
 }
 
@@ -827,6 +1012,168 @@ function BranchPicker(props) {
 }
 
 /**
+ * The portalled popup behind one actions menu.
+ *
+ * It borrows the branch menu's measuring rule (the box is captured when the
+ * trigger opens, because the popup is portalled) but keeps the action-list
+ * semantics: `role="menu"` / `menuitem`, not `listbox` / `option`.
+ *
+ * @param props - `{ anchor, items, active, onHover, onPick, menuRef, t, title }`.
+ * @returns the menu.
+ */
+function MoreMenu(props) {
+  const { anchor, items, active, onHover, onPick, menuRef, t, title } = props
+  const [style, setStyle] = useState({ left: -9999, top: 0, visibility: 'hidden' })
+  useLayoutEffect(() => {
+    const element = menuRef.current
+    if (element === null || anchor === null) return
+    const rect = element.getBoundingClientRect()
+    const width = Math.min(300, Math.max(200, Math.round(anchor.width) || 0))
+    const below = anchor.bottom + 6
+    const fitsBelow = below + rect.height <= window.innerHeight - 8
+    setStyle({
+      left: Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)),
+      top: fitsBelow ? below : Math.max(8, anchor.top - rect.height - 6),
+      width,
+      visibility: 'visible',
+    })
+  }, [anchor, items.length])
+  const list = h(
+    'div',
+    { ref: menuRef, className: 'gmg-moremenu', role: 'menu', 'aria-label': title, style },
+    items.length === 0
+      ? h('div', { className: 'gmg-branchmenu-empty' }, t('loading'))
+      : items.map((item, index) =>
+          h(
+            'div',
+            {
+              key: item.key,
+              role: 'menuitem',
+              'aria-disabled': item.disabled === true,
+              className: `gmg-moreitem${item.disabled === true ? ' is-disabled' : ''}${index === active ? ' is-active' : ''}`,
+              title: item.hint ?? item.label,
+              onMouseEnter: () => onHover(index),
+              onMouseDown: (event) => event.preventDefault(),
+              onClick: () => onPick(index),
+            },
+            h('span', { className: 'gmg-moreitem-name' }, item.label),
+            typeof item.count === 'number' ? h('span', { className: 'gmg-count gmg-stashcount' }, String(item.count)) : null,
+          ),
+        ),
+  )
+  if (typeof reactDom?.createPortal !== 'function') return list
+  return reactDom.createPortal(list, document.body)
+}
+
+/**
+ * One low-frequency action menu: a quiet trigger plus a portalled menu.
+ *
+ * The trigger is the caller's, because the two call sites differ (a `⋯` button
+ * and a caret beside Pull) while the popup behaviour does not.
+ *
+ * @param props - `{ t, title, className, children, items, disabled }`.
+ * @returns the trigger and, when open, its menu.
+ */
+function ActionsMenuButton(props) {
+  const { t, title, className, children, items, disabled } = props
+  const [open, setOpen] = useState(false)
+  const [anchor, setAnchor] = useState(null)
+  const [active, setActive] = useState(0)
+  const trigger = useRef(null)
+  const menu = useRef(null)
+  const close = () => setOpen(false)
+  const pick = (index) => {
+    const item = items[index]
+    if (item === undefined || item.disabled === true) return
+    close()
+    if (typeof item.onSelect === 'function') item.onSelect()
+  }
+  useEffect(() => {
+    if (!open) return undefined
+    const onDown = (event) => {
+      if (menu.current?.contains(event.target) === true) return
+      if (trigger.current?.contains(event.target) === true) return
+      close()
+    }
+    const onKey = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        close()
+        return
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setActive((index) => Math.min(items.length - 1, index + 1))
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setActive((index) => Math.max(0, index - 1))
+        return
+      }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        pick(active)
+      }
+    }
+    const onResize = () => close()
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open, active, items.length])
+  const toggle = () => {
+    if (disabled === true) return
+    if (open) {
+      close()
+      return
+    }
+    setAnchor(trigger.current?.getBoundingClientRect() ?? null)
+    setActive(Math.max(0, items.findIndex((item) => item.disabled !== true)))
+    setOpen(true)
+  }
+  return h(
+    Fragment,
+    null,
+    h(
+      'button',
+      {
+        ref: trigger,
+        type: 'button',
+        className: `gmg-morebtn${className === undefined ? '' : ` ${className}`}${open ? ' is-open' : ''}`,
+        title,
+        'aria-haspopup': 'menu',
+        'aria-expanded': open,
+        'aria-label': title,
+        disabled: disabled === true,
+        onClick: toggle,
+      },
+      children,
+    ),
+    open ? h(MoreMenu, { anchor, items, active, onHover: setActive, onPick: pick, menuRef: menu, t, title }) : null,
+  )
+}
+
+/**
+ * Ask for a stash message, tolerating a host that has no prompt.
+ * @param t - the locale.
+ * @returns the message ('' when skipped), or null when the reader cancelled.
+ */
+function askStashMessage(t) {
+  try {
+    if (typeof window.prompt !== 'function') return ''
+    const answer = window.prompt(t('stashMessagePrompt'), '')
+    return answer === null ? null : String(answer)
+  } catch {
+    return ''
+  }
+}
+
+/**
  * The branch list, portalled so the panel's scroll box cannot clip it.
  *
  * @param props - `{ anchor, rows, current, active, onHover, onPick, menuRef, t }`.
@@ -891,10 +1238,17 @@ function BranchBar(props) {
   const { status, t, busy, branches } = props
   const [creating, setCreating] = useState(false)
   const [draft, setDraft] = useState('')
+  const store = useGitStore()
 
   const ahead = status.ahead ?? 0
   const behind = status.behind ?? 0
   const upstream = status.upstream
+  // Bare has no worktree: fetch still reads the server, but pull/push/stash are
+  // operations the host would refuse with `bare-readonly` (G4).
+  const bare = status.bare === true
+  // A branch that is both ahead and behind has two honest ways forward; offer
+  // them beside Pull instead of pretending fast-forward always works (G1).
+  const diverged = ahead > 0 && behind > 0
 
   return h(
     'div',
@@ -923,19 +1277,49 @@ function BranchBar(props) {
     h('span', { className: 'gmg-spacer' }),
     h(
       'button',
-      { className: 'gmg-btn', type: 'button', disabled: busy !== null || upstream === null, onClick: () => gitStore.remote('fetch'), title: t('fetchHint') },
+      {
+        // A fetch does not care about this branch's upstream — it updates the
+        // remote-tracking refs of the configured remotes (poweruser G12).
+        className: 'gmg-btn',
+        type: 'button',
+        disabled: busy !== null,
+        onClick: () => gitStore.remote('fetch'),
+        title: t('fetchHint'),
+      },
       h(IconDownload, { size: 13 }),
       t('fetch'),
     ),
     h(
       'button',
-      { className: 'gmg-btn', type: 'button', disabled: busy !== null || upstream === null, onClick: () => gitStore.remote('pull'), title: t('pullHint') },
+      {
+        className: 'gmg-btn',
+        type: 'button',
+        disabled: busy !== null || upstream === null || bare,
+        onClick: () => gitStore.remote('pull', { mode: 'ff' }),
+        title: t('pullHint'),
+      },
       t('pull'),
       behind > 0 ? h('span', { className: 'gmg-behind' }, behind) : null,
     ),
+    diverged
+      ? h(
+          ActionsMenuButton,
+          {
+            t,
+            title: t('pullMenuTitle'),
+            className: 'gmg-pull-more',
+            disabled: busy !== null || bare,
+            items: [
+              { key: 'ff', label: t('pullFf'), hint: t('pullFfHint'), onSelect: () => gitStore.remote('pull', { mode: 'ff' }) },
+              { key: 'merge', label: t('pullMerge'), hint: t('pullMergeHint'), onSelect: () => gitStore.remote('pull', { mode: 'merge' }) },
+            ],
+          },
+          h(IconChevronDown, { size: 12 }),
+        )
+      : null,
     h(
       'button',
-      { className: 'gmg-btn', type: 'button', disabled: busy !== null, onClick: () => gitStore.remote('push'), title: t('pushHint') },
+      { className: 'gmg-btn', type: 'button', disabled: busy !== null || bare, onClick: () => gitStore.remote('push'), title: t('pushHint') },
       h(IconUpload, { size: 13 }),
       t('push'),
       ahead > 0 ? h('span', { className: 'gmg-ahead' }, ahead) : null,
@@ -945,11 +1329,43 @@ function BranchBar(props) {
       {
         className: 'gmg-btn is-ghost',
         type: 'button',
-        disabled: busy !== null,
+        disabled: busy !== null || bare,
         title: t('newBranch'),
         onClick: () => setCreating((value) => !value),
       },
       h(IconPlus, { size: 13 }),
+    ),
+    // The low-frequency surface: one `⋯` holding stash push/pop. It is not a
+    // resident button — the menu is the only entrance (plan-v2 §3.4).
+    h(
+      ActionsMenuButton,
+      {
+        t,
+        title: t('moreActions'),
+        className: 'gmg-stash-menu',
+        disabled: bare,
+        items: [
+          {
+            key: 'stash-push',
+            label: t('stashPush'),
+            hint: t('stashPushHint'),
+            onSelect: () => {
+              const message = askStashMessage(t)
+              if (message === null) return
+              gitStore.stash('push', message)
+            },
+          },
+          {
+            key: 'stash-pop',
+            label: t('stashPop'),
+            hint: t('stashPopHint'),
+            count: typeof store.stashCount === 'number' ? store.stashCount : undefined,
+            disabled: store.stashCount === 0 || store.stashCount === null,
+            onSelect: () => gitStore.stash('pop'),
+          },
+        ],
+      },
+      h(IconMore, { size: 13 }),
     ),
     creating
       ? h(
@@ -997,26 +1413,66 @@ function CommitBox(props) {
   const { status, state, t, busy } = props
   const stagedCount = status.staged.length
   const changeCount = status.changes.length
-  const blocked = status.conflicts.length > 0
-  const canCommit = state.message.trim() !== '' && (stagedCount > 0 || state.stageAll) && busy === null && !blocked
+  // A merge in progress is *exactly* when this button should work: the merge
+  // commit is how the operation finishes. Rebase and cherry-pick are the
+  // opposite — git owns the sequencer and a `git commit` here either fails or
+  // strands the sequencer, so those stay disabled with the terminal command.
+  const conflictsBlock = status.conflicts.length > 0
+  const operation = typeof status.operation === 'string' ? status.operation : null
+  const operationBlock = operation === 'rebase' || operation === 'cherry-pick'
+  const merging = operation === 'merge' && !conflictsBlock
+  // The commit itself is one operation, but a row's stage can still be in
+  // flight under it: name that operation and let this button wait for it.
+  const op = fileOp('commit', [])
+  const opBusy = state.busyOp === op
+  const canCommit =
+    state.message.trim() !== '' &&
+    (stagedCount > 0 || state.stageAll) &&
+    busy === null &&
+    !conflictsBlock &&
+    !operationBlock &&
+    !opBusy
+  // One line, one reason: the most specific blocker wins.
+  const blockNote = conflictsBlock
+    ? t('conflictBlockHint')
+    : operation === 'rebase'
+      ? t('rebaseInProgressHint')
+      : operation === 'cherry-pick'
+        ? t('cherryPickInProgressHint')
+        : merging
+          ? t('finishMergeHint')
+          : null
 
   const submit = () => {
     if (!canCommit) return
-    gitStore.commit()
+    // An amend that also stages everything rewrites the last commit with more
+    // in it than the reader typed (poweruser G3): say what it will do first.
+    if (state.amend && state.stageAll) {
+      if (!window.confirm(t('amendStageAllConfirm'))) return
+    }
+    gitStore.commit({ op })
   }
 
   const toggleAmend = (checked) => {
     gitStore.setFlag('amend', checked)
     // Preview the message an amend would replace, but never overwrite a draft.
+    // The subject is instant; the body rides in on `commitDetail` a moment
+    // later, because `-m` replaces the whole message, not just the subject.
     if (checked && gitStore.get().message.trim() === '') {
       const head = gitStore.get().log[0]
       if (typeof head?.subject === 'string' && head.subject !== '') gitStore.setMessage(head.subject)
+      gitStore.loadFullMessage()
     }
   }
+
+  const head = state.log[0] ?? null
 
   return h(
     'div',
     { className: 'gmg-commit' },
+    state.amend && head !== null
+      ? h('div', { className: 'gmg-hint gmg-amend-preview' }, t('amendPreview', { short: head.short ?? '', subject: head.subject ?? '' }))
+      : null,
     h('textarea', {
       className: 'gmg-textarea',
       placeholder: t('commitPlaceholder'),
@@ -1054,7 +1510,9 @@ function CommitBox(props) {
         }),
         t('amend'),
       ),
-      blocked ? h('span', { className: 'gmg-hint gmg-conflict-hint' }, t('conflictBlockHint')) : null,
+      blockNote === null
+        ? null
+        : h('span', { className: `gmg-hint ${merging ? 'gmg-merge-hint' : 'gmg-conflict-hint'}` }, blockNote),
       h('span', { className: 'gmg-spacer' }),
       h(
         'span',
@@ -1071,7 +1529,15 @@ function CommitBox(props) {
           onClick: submit,
           // A disabled button with nothing to say is a dead end: name the
           // reason it cannot be pressed, while its label stays readable.
-          title: canCommit ? t('commitHint') : blocked ? t('conflictBlockHint') : state.message.trim() === '' ? t('commitNeedsMessage') : t('commitNeedsStaged'),
+          title: canCommit
+            ? merging
+              ? t('finishMergeHint')
+              : t('commitHint')
+            : blockNote !== null
+              ? blockNote
+              : state.message.trim() === ''
+                ? t('commitNeedsMessage')
+                : t('commitNeedsStaged'),
         },
         busy === 'commit' ? h(IconRefresh, { size: 13 }) : h(IconCheck, { size: 13 }),
         t('commit'),
@@ -1082,23 +1548,36 @@ function CommitBox(props) {
 
 /**
  * One group of files (staged, changes, or conflicts).
- * @param props - `{ title, rows, staged, t, empty, conflicts }`.
+ * @param props - `{ title, rows, staged, t, empty, conflicts, focusAt }`.
  * @returns the group element.
  */
 function ChangeGroup(props) {
-  const { title, rows, staged, t, empty, conflicts } = props
+  const { title, rows, staged, t, empty, conflicts, focusAt } = props
+  const busyOp = useGitStore().busyOp
   // The list is the tallest thing in the column and the one readers fold away
   // most often: one click on the header collapses it, and the count stays
   // visible so a folded group still says how much is inside.
   const [collapsed, setCollapsed] = useState(false)
+  const groupRef = useRef(null)
+  // `focusAt` is the store saying “this group is why the last action failed”:
+  // unfold it and scroll it into view, without the store touching the DOM.
+  useEffect(() => {
+    if (focusAt === null || focusAt === undefined) return
+    setCollapsed(false)
+    const node = groupRef.current
+    if (node !== null && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
+  }, [focusAt])
   if (rows.length === 0 && empty === null) return null
+  // The bulk button names its own target, so the lock lands on this header
+  // only — a single row's stage must not grey out the whole group (G11).
+  const bulk = fileOp(staged ? 'unstage' : 'stage', rows.map((row) => row.path))
   const body =
     rows.length === 0
       ? h('div', { className: 'gmg-empty' }, empty)
       : h('div', { className: 'gmg-files' }, rows.map((row) => h(FileRow, { key: `${staged ? 's' : 'w'}:${row.path}`, row, staged, t, conflicts })))
   return h(
     'div',
-    { className: collapsed ? 'gmg-group is-collapsed' : 'gmg-group' },
+    { className: collapsed ? 'gmg-group is-collapsed' : 'gmg-group', ref: groupRef },
     h(
       'div',
       { className: 'gmg-group-head' },
@@ -1126,6 +1605,7 @@ function ChangeGroup(props) {
               type: 'button',
               title: staged ? t('unstageAll') : t('stageAllFiles'),
               'aria-label': staged ? t('unstageAll') : t('stageAllFiles'),
+              disabled: busyOp === bulk,
               onClick: () => (staged ? gitStore.unstageAll() : gitStore.stageAll()),
             },
             staged ? h(IconMinus, { size: 13 }) : h(IconPlus, { size: 13 }),
@@ -1181,6 +1661,9 @@ function FileRow(props) {
   const state = useGitStore()
   const { name, dir } = splitPath(row.path)
   const untracked = row.kind === 'untracked'
+  // Only *this* row's own operation locks its buttons (poweruser G11): a
+  // neighbour's stage keeps running, and an error is never swallowed by it.
+  const inflight = (action) => state.busyOp === fileOp(action, [row.path])
   const openThis = () => {
     if (typeof gmgSidebarBridge.openDiff === 'function') {
       gmgSidebarBridge.openDiff({ path: state.path, file: row.path, staged, status: row.status })
@@ -1190,7 +1673,8 @@ function FileRow(props) {
   const discard = () => {
     const message = untracked ? t('deleteConfirm', { file: row.path }) : t('discardConfirm', { file: row.path })
     if (!window.confirm(message)) return
-    gitStore.fileAction(untracked ? 'deleteUntracked' : 'discard', [row.path], untracked ? t('deleted') : t('discarded'))
+    const action = untracked ? 'deleteUntracked' : 'discard'
+    gitStore.fileAction(action, [row.path], untracked ? t('deleted') : t('discarded'), { op: fileOp(action, [row.path]) })
   }
 
   const actions = []
@@ -1204,9 +1688,10 @@ function FileRow(props) {
           type: 'button',
           title: t('unstage'),
           'aria-label': t('unstage'),
+          disabled: inflight('unstage'),
           onClick: (event) => {
             event.stopPropagation()
-            gitStore.fileAction('unstage', [row.path], null)
+            gitStore.fileAction('unstage', [row.path], null, { op: fileOp('unstage', [row.path]) })
           },
         },
         h(IconMinus, { size: 13 }),
@@ -1222,9 +1707,10 @@ function FileRow(props) {
           type: 'button',
           title: t('markResolved'),
           'aria-label': t('markResolved'),
+          disabled: inflight('stage'),
           onClick: (event) => {
             event.stopPropagation()
-            gitStore.fileAction('stage', [row.path], null)
+            gitStore.fileAction('stage', [row.path], null, { op: fileOp('stage', [row.path]) })
           },
         },
         h(IconCheck, { size: 13 }),
@@ -1240,9 +1726,10 @@ function FileRow(props) {
           type: 'button',
           title: t('stage'),
           'aria-label': t('stage'),
+          disabled: inflight('stage'),
           onClick: (event) => {
             event.stopPropagation()
-            gitStore.fileAction('stage', [row.path], null)
+            gitStore.fileAction('stage', [row.path], null, { op: fileOp('stage', [row.path]) })
           },
         },
         h(IconPlus, { size: 13 }),
@@ -1255,6 +1742,7 @@ function FileRow(props) {
           type: 'button',
           title: untracked ? t('delete') : t('discard'),
           'aria-label': untracked ? t('delete') : t('discard'),
+          disabled: inflight(untracked ? 'deleteUntracked' : 'discard'),
           onClick: (event) => {
             event.stopPropagation()
             discard()

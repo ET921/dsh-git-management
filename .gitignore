@@ -2,3 +2,5 @@ node_modules/
 .npm-cache/
 npm-debug.log*
 _asar*/
+.DS_Store
+*.tgz

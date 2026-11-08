@@ -158,6 +158,9 @@ function CommitDiffPanel(props) {
       ),
       short === '' ? null : h('span', { className: 'gmg-sha', title: sha }, short),
       h('span', { className: 'gmg-cdiff-subject', title: sha === '' ? subject : `${short} ${subject}` }, subject === '' ? t('commitDiffTabTitle') : subject),
+      // P2-1: the same copy-sha / open-on-GitHub pair the hover card offers,
+      // reusing that component so the two surfaces cannot drift apart.
+      sha === '' ? null : h(CommitLinkZone, { sha }),
     ),
     h(
       'div',

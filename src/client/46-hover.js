@@ -286,6 +286,65 @@ function useGithubAuthor(sha) {
 }
 
 /**
+ * The hover card and the commit tab share one pair of quiet extras (P2-1):
+ * copy the full sha, and open that exact commit on GitHub when the panel is
+ * authorised. They never restyle the card, never fetch anything new, and the
+ * link only exists while the GitHub card already resolved a `webUrl`.
+ *
+ * @param props - `{ sha }`.
+ * @returns the control row.
+ */
+function CommitLinkZone(props) {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef(undefined)
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+  const webUrl = gitStore.get().github?.remote?.webUrl ?? null
+  const copy = async () => {
+    if (await copyToClipboard(props.sha)) {
+      setCopied(true)
+      window.clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => setCopied(false), 1500)
+    }
+  }
+  return h(
+    'div',
+    { className: 'gmg-quicklinks' },
+    h(
+      'button',
+      {
+        className: 'gmg-icon-btn',
+        type: 'button',
+        title: copied ? tr('copied') : tr('copySha'),
+        'aria-label': tr('copySha'),
+        onClick: (event) => {
+          event.stopPropagation()
+          copy()
+        },
+      },
+      // IconCopy is design's (20-icons.js). The fallback is a text glyph, so a
+      // page newer than the icon file still renders the control instead of
+      // killing the bundle on one missing symbol.
+      typeof IconCopy === 'function' ? h(IconCopy, { size: 11 }) : h('span', null, '⧉'),
+    ),
+    webUrl === null
+      ? null
+      : h(
+          'a',
+          {
+            className: 'gmg-icon-btn',
+            href: `${webUrl}/commit/${props.sha}`,
+            target: '_blank',
+            rel: 'noreferrer',
+            title: tr('openCommitOnGithub'),
+            'aria-label': tr('openCommitOnGithub'),
+            onClick: (event) => event.stopPropagation(),
+          },
+          h(IconExternal, { size: 11 }),
+        ),
+  )
+}
+
+/**
  * The commit card: a tinted head (sha, author, age), the message zone with the
  * subject and its body, and a foot zone carrying the stat line the Source
  * Control view has always used ("N files changed, X insertions(+), Y deletions(-)").
@@ -317,6 +376,7 @@ function CommitHoverCard(props) {
       : error === null
         ? h('div', { className: 'gmg-hoverzone is-foot' }, h('div', { className: 'gmg-hoverstats' }, t('hoverLoading')))
         : null,
+    detail !== null ? h(CommitLinkZone, { sha: commit.sha }) : null,
   )
 }
 

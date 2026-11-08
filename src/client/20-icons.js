@@ -181,3 +181,21 @@ const IconTag = makeIcon([
   h('path', { key: 'a', d: 'M2.6 7.4V3.4a.8.8 0 0 1 .8-.8h4l6 6-4.8 4.8-6-6Z' }),
   h('circle', { key: 'b', cx: 5.2, cy: 5.2, r: 1 }),
 ])
+
+/** Copy the sha / open the change set elsewhere. */
+const IconCopy = makeIcon([
+  // The back frame is a three-sided path instead of a second full rect: two
+  // full strokes would draw crossing lines inside the front frame, which at
+  // 15px reads as noise. The path stops exactly on the front frame's edge.
+  h('path', {
+    key: 'a',
+    d: 'M5.5 5.5V4a1.5 1.5 0 0 1 1.5-1.5h5A1.5 1.5 0 0 1 13.5 4v5a1.5 1.5 0 0 1-1.5 1.5h-1.5',
+  }),
+  h('rect', { key: 'b', x: 2.5, y: 5.5, width: 8, height: 8, rx: 1.5 }),
+])
+
+/** The "more" trigger: extra actions that live behind one button. */
+const IconMore = makeIcon(
+  [h('circle', { key: 'a', cx: 3.4, cy: 8, r: 1.4 }), h('circle', { key: 'b', cx: 8, cy: 8, r: 1.4 }), h('circle', { key: 'c', cx: 12.6, cy: 8, r: 1.4 })],
+  { filled: true },
+)

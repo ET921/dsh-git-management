@@ -27,6 +27,13 @@ const reactDom = (() => {
 /** Terse hyperscript; this file set is JSX-free so the build needs no compiler. */
 const h = react.createElement
 
+/**
+ * A keyed group that adds no element. The panel's page children are a mixed
+ * list (header, notices, body…); wrapping the notice slice keeps that slot
+ * stable, so a notice appearing no longer remounts the card below it.
+ */
+const Fragment = react.Fragment
+
 const { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } = react
 
 /** Module id: the bundle's id and (by the plugin's own choice) its tab id. */
@@ -38,7 +45,7 @@ const API_ROUTE = '/dsh-git/api'
 /** Where the panel remembers the chosen repository across reloads. */
 const REPO_STORAGE_KEY = 'dsh-git-management/repo-path'
 
-/** Where the optional GitHub token is kept (this browser only). */
+/** Where earlier builds kept the GitHub token; the key is wiped on load (plan-v2 S24). */
 const TOKEN_STORAGE_KEY = 'dsh-git-management/github-token'
 
 /**
@@ -63,29 +70,42 @@ function apiUrl(path) {
 }
 
 /**
- * Read the stored GitHub token, if this browser has one.
+ * The GitHub token for this page load only (plan-v2 S24 / K1 decision (b)).
+ *
+ * It is deliberately memory-only: the token never reaches localStorage, and
+ * the key older builds wrote is wiped as soon as the bundle runs. A reload
+ * asks for it again — that is the whole cost of the guarantee.
+ */
+let gmgSessionToken = null
+
+/**
+ * Read the session token, if the user has entered one this page load.
  * @returns the token or null.
  */
 function readToken() {
-  try {
-    return window.localStorage.getItem(TOKEN_STORAGE_KEY)
-  } catch {
-    return null
-  }
+  return gmgSessionToken
 }
 
 /**
- * Persist (or clear) the GitHub token.
+ * Remember (or forget) the GitHub token for this page load. Never persists.
  * @param token - the token, or null to forget it.
  */
-function writeToken(token) {
+function rememberToken(token) {
+  gmgSessionToken = token === null || token === '' ? null : token
+}
+
+// Clear the persisted token every storage backend may still hold: the page can
+// load before the storage service is ready, so one more sweep rides on the
+// first user gesture as well.
+function eraseStoredToken() {
   try {
-    if (token === null) window.localStorage.removeItem(TOKEN_STORAGE_KEY)
-    else window.localStorage.setItem(TOKEN_STORAGE_KEY, token)
+    window.localStorage.removeItem(TOKEN_STORAGE_KEY)
   } catch {
-    /* private mode: the panel still works, it just does not remember */
+    /* private mode: there was nothing on disk to clear */
   }
 }
+
+eraseStoredToken()
 
 /**
  * The stored repository path, if this browser has one.
@@ -114,16 +134,22 @@ function writeStoredRepo(path) {
 /**
  * One request to the host action table.
  *
+ * The session token rides on the `github` action and nothing else (plan-v2
+ * §3.3-7): a `status` poll has no business carrying a credential, and every
+ * extra transport is another place it could leak.
+ *
  * @param action - action name (`status`, `commit`, …).
  * @param params - action arguments; `path` is the repository directory.
  * @returns the action's result.
- * @throws when the host reports a failure, with git's own message.
+ * @throws when the host reports a failure, with git's own message; the thrown
+ *   error carries the envelope's stable `code` (§3.1) and `details`.
  */
 async function callHost(action, params = {}) {
+  const token = action === 'github' ? readToken() ?? undefined : undefined
   const response = await fetch(apiUrl(API_ROUTE), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, params, token: readToken() ?? undefined }),
+    body: JSON.stringify({ action, params, token }),
     cache: 'no-store',
   })
   let body = null
@@ -135,10 +161,25 @@ async function callHost(action, params = {}) {
   if (!response.ok || body?.ok !== true) {
     const message = body?.error ?? `HTTP ${response.status}`
     const error = new Error(String(message))
+    error.code = body?.code ?? null
     error.details = body?.details
     throw error
   }
   return body.result
+}
+
+/**
+ * Copy one string to the clipboard, if this context exposes it.
+ * @param value - the text.
+ * @returns true when the clipboard took it.
+ */
+async function copyToClipboard(value) {
+  try {
+    await navigator.clipboard.writeText(String(value))
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**

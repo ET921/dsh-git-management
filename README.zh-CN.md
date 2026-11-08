@@ -37,12 +37,12 @@ flowchart LR
 ## 30 秒上手
 
 1. 先开一个 **session**（右侧边栏是 session 范围的，没有 session 看不到）。
-2. 右侧栏切到「**开始**」，往下找到第三张卡片「**源代码管理**」。
+2. 右侧栏切到「**开始**」，往下找到「**源代码管理**」卡片（位置依安装的外挂数量而定）。
 3. 点它 → 右栏多一个 Git 分页，默认会选好当前 workspace 的 repo。
 
 ![开始页与卡片](docs/images/01-start.png)
 
-> 右栏「开始」页：第三张卡片就是「源代码管理」。
+> 右栏「开始」页：往下滚动就是「源代码管理」卡片。
 
 没看到面板？直接跳〈卡住了？〉。
 
@@ -132,7 +132,7 @@ sequenceDiagram
 
 - 自动认出 origin（ssh / https、GitHub Enterprise 也行）。
 - 看星标／复刻／issue 数、PR 清单、Issue 清单，从当前分支一键开 PR。
-- Token 只存在这个浏览器；推送走你本机的 git 凭证。
+- GitHub token 只放在本次分页载入的内存里，不写进浏览器存储——重新载入页面要重填；推送走你本机的 git 凭证。
 
 ### 其他小东西
 
@@ -244,7 +244,6 @@ flowchart LR
 - **Host**：`/dsh-git/api` 一条 JSON 路由 → 动作表（`src/actions.js`）→ `ctx.subprocess` 跑 `git`；`src/git.js` 是可注入 exec 的纯引擎，没有 DSH 依赖。
 - **Client**：`sidebarRightTabs` 声明三种分页（面板、文件差异、提交差异），slot 提供内容与标题；面板状态是 module-level store，切换主栏不会忘。
 - **数据流**：每个动作都是「读 git → 回 JSON → 重画」；没有缓存状态，`status` 是唯一真相。
-- 为什么是这种做法（跟 Cursor / VS Code 的对照）见 [docs/design.md](docs/design.md)。
 
 ### 文件结构
 
@@ -266,16 +265,13 @@ src/
     46-hover.js     hover 卡
     47-commit-panel.js 提交差异分页
     50-plugin.js    字典＋分页注册
-scripts/            build / verify / render-test
-docs/               design.md、worktrees.md、commit-diff.md、reviews/
+scripts/            build
 ```
 
 ### 验证
 
 ```bash
 npm run build        # src/ → lib/（lib 是入库的产物）
-npm run verify       # 147 项：对真的 git 验证引擎、动作、HTTP 守卫
-npm run test:render  # 177 项：jsdom + 真的 React 渲染面板
 ```
 
 ### 安全边界
@@ -283,7 +279,7 @@ npm run test:render  # 177 项：jsdom + 真的 React 渲染面板
 - `/dsh-git/api` 只吃 `content-type: application/json`（强制 preflight），加同源检查；有 `connection` 服务时再请它拒绝一次。
 - 请求的 `path` 必须在已注册 workspace 内（或子目录），否则 403。
 - 文件一律用 `:(literal)` pathspec；`commitDiff` 只接受 4–64 位 hex sha，并加 `--no-ext-diff`。
-- GitHub token 只存 localStorage；推送走本机 git 凭据。
+- GitHub token 只放本次分页载入的内存，不落盘（不存 localStorage；旧版残留会在载入时自动清掉），且只附加在 `github` 动作上；推送走本机 git 凭据。
 
 ### 已知边界
 
@@ -307,18 +303,13 @@ npm run test:render  # 177 项：jsdom + 真的 React 渲染面板
          name: dsh-git-management
    ```
 
-4. 在 profile 的 `node_modules` 建链接：`mklink /J node_modules\dsh-git-management <这个文件夹>`
+4. 在 profile 的 `node_modules` 建链接（二选一，看你的系统）：
+   - Windows（cmd）：`mklink /J node_modules\dsh-git-management <这个文件夹>`
+   - macOS / Linux：`ln -s <这个文件夹> node_modules/dsh-git-management`（在 profile 资料夹内执行）
 5. 重启 DSH Desktop。
 
 ---
 
-## 文档
-
-- [docs/design.md](docs/design.md) — 为什么用系统 `git`、跟 Cursor / VS Code 的对照
-- [docs/worktrees.md](docs/worktrees.md) — 工作树功能的设计与取舍
-- [docs/commit-diff.md](docs/commit-diff.md) — 提交差异分页的设计与取舍
-- [docs/reviews/](docs/reviews/) — 五份专家评审与交叉评审
-
 ## 许可证
 
-MIT
+MIT，见 [LICENSE](LICENSE)
