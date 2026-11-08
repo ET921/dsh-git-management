@@ -244,7 +244,6 @@ flowchart LR
 - **Host**：`/dsh-git/api` 一条 JSON 路由 → 动作表（`src/actions.js`）→ `ctx.subprocess` 跑 `git`；`src/git.js` 是可注入 exec 的纯引擎，没有 DSH 依赖。
 - **Client**：`sidebarRightTabs` 声明三种分页（面板、文件差异、提交差异），slot 提供内容与标题；面板状态是 module-level store，切换主栏不会忘。
 - **数据流**：每个动作都是「读 git → 回 JSON → 重画」；没有缓存状态，`status` 是唯一真相。
-- 为什么是这种做法（跟 Cursor / VS Code 的对照）见 [docs/design.md](docs/design.md)。
 
 ### 文件结构
 
@@ -266,16 +265,13 @@ src/
     46-hover.js     hover 卡
     47-commit-panel.js 提交差异分页
     50-plugin.js    字典＋分页注册
-scripts/            build / verify / render-test
-docs/               design.md、worktrees.md、commit-diff.md、reviews/
+scripts/            build
 ```
 
 ### 验证
 
 ```bash
 npm run build        # src/ → lib/（lib 是入库的产物）
-npm run verify       # 213 项：对真的 git 验证引擎、动作、HTTP 守卫
-npm run test:render  # 297 项：jsdom + 真的 React 渲染面板
 ```
 
 ### 安全边界
@@ -314,13 +310,6 @@ npm run test:render  # 297 项：jsdom + 真的 React 渲染面板
 
 ---
 
-## 文档
-
-- [docs/design.md](docs/design.md) — 为什么用系统 `git`、跟 Cursor / VS Code 的对照
-- [docs/worktrees.md](docs/worktrees.md) — 工作树功能的设计与取舍
-- [docs/commit-diff.md](docs/commit-diff.md) — 提交差异分页的设计与取舍
-- [docs/reviews/](docs/reviews/) — 五份专家评审与交叉评审
-
 ## 许可证
 
-MIT
+MIT，见 [LICENSE](LICENSE)

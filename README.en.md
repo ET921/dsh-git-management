@@ -244,7 +244,6 @@ flowchart LR
 - **Host**: one JSON route `/dsh-git/api` → action table (`src/actions.js`) → `ctx.subprocess` runs `git`. `src/git.js` is a plain engine with an injectable `exec`, free of DSH types.
 - **Client**: `sidebarRightTabs` declares three tab types (panel, file diff, commit diff); slots provide bodies and chips. State is a module-level store, so switching the main panel doesn't forget the repository.
 - **Data flow**: every action is "read git → return JSON → re-render"; there is no cached state, `status` is the source of truth.
-- Why it is built this way (and how it maps to Cursor / VS Code) is in [docs/design.md](docs/design.md).
 
 ### Layout
 
@@ -266,16 +265,13 @@ src/
     46-hover.js     Hover cards
     47-commit-panel.js Commit diff tab
     50-plugin.js    Dictionaries + tab registration
-scripts/            build / verify / render-test
-docs/               design.md, worktrees.md, commit-diff.md, reviews/
+scripts/            build
 ```
 
 ### Verification
 
 ```bash
 npm run build        # src/ → lib/ (lib is checked in)
-npm run verify       # 213 checks: engine, actions, HTTP guards against real git
-npm run test:render  # 297 checks: jsdom + real React rendering
 ```
 
 ### Security boundaries
@@ -314,13 +310,6 @@ npm run test:render  # 297 checks: jsdom + real React rendering
 
 ---
 
-## Docs
-
-- [docs/design.md](docs/design.md) — why system `git`, and the Cursor / VS Code comparison
-- [docs/worktrees.md](docs/worktrees.md) — worktree design and trade-offs (Chinese)
-- [docs/commit-diff.md](docs/commit-diff.md) — commit-diff tab design and trade-offs (Chinese)
-- [docs/reviews/](docs/reviews/) — five expert reviews and a cross-review (Chinese)
-
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)
