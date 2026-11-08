@@ -205,7 +205,12 @@ const PANEL_CSS = `
 .gmg-btn.is-primary {
   background: var(--dsw-alias-brand-primary);
   border-color: transparent;
-  color: #fff;
+  /* The fill is the theme's brand accent, but that accent is not a fixed hue:
+     it is near-white in the dark theme and near-black in the light one. A
+     hardcoded white label therefore vanished into the white fill and the
+     button read as an empty pill (the GitHub token Save button). The ink has
+     to be the surface colour the accent is designed to sit on. */
+  color: var(--dsw-alias-bg-base);
   font-weight: 600;
 }
 .gmg-btn.is-primary:hover:not(:disabled) { filter: brightness(1.08); }

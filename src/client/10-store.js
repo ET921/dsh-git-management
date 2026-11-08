@@ -27,12 +27,14 @@ function initialState() {
     /** Recent commits, newest first. */
     log: [],
     /**
-     * Which history the rail draws: `head` follows the checked-out line (the
-     * shape Cursor's graph has), `all` reads every ref. Kept in the store, not
-     * in the component, so switching the main column away and back does not
-     * silently drop the reader's choice and refetch the other history.
+     * Which history the rail draws: `all` follows the checked-out line plus
+     * every branch, tag and remote-tracking ref — the collaboration view, so a
+     * colleague's pushed branch appears (after a fetch) on its own lane;
+     * `head` narrows it to the checked-out line. Kept in the store, not in the
+     * component, so switching the main column away and back does not silently
+     * drop the reader's choice and refetch the other history.
      */
-    logScope: 'head',
+    logScope: 'all',
     /** `{ current, branches }` from `git for-each-ref`. */
     branches: null,
     /** Every checkout of the repository; see the `worktrees` action. */
