@@ -9,7 +9,7 @@
 
 ![Panel overview](docs/images/00-overview.png)
 
-> The whole right-hand Git column: branch bar, commit box, change list, history, GitHub.
+> The whole right-hand Git column: branch bar, commit box, change list, Graph, GitHub.
 
 ---
 
@@ -25,7 +25,7 @@ flowchart LR
   B --> C["Card: Source Control"]
   C --> D["Git tab"]
   D --> E["Change list"]
-  D --> F["History"]
+  D --> F["Graph"]
   D --> G["Worktrees"]
   D --> H["GitHub"]
   E --> I["File diff tab"]
@@ -56,7 +56,7 @@ flowchart TB
   P --> B["Commit box<br/>message, stage all, amend"]
   P --> C["Change list<br/>staged / changes / conflicts"]
   P --> D["Worktrees<br/>every checkout of this repo"]
-  P --> E["History<br/>commit list + branch lanes"]
+  P --> E["Graph<br/>commit list + branch lanes"]
   P --> F["GitHub<br/>repo info, PRs, issues"]
 ```
 
@@ -66,7 +66,7 @@ flowchart TB
 | Commit box | Write a message, press commit |
 | Change list | Which files changed; click one to see its diff |
 | Worktrees | Other folders of the same repo (parallel Agent work) |
-| History | What happened; click a row to see that commit |
+| Graph | The whole team’s lines; click a row to see that commit |
 | GitHub | PRs and issues without leaving the app |
 
 ---
@@ -88,7 +88,7 @@ flowchart TB
 
 ### See what one commit changed
 
-- Click any row in **History** → a new **Commit diff** tab opens.
+- Click any row in **Graph** → a new **Commit diff** tab opens.
 - One block per file, stacked vertically; only the changed hunks are drawn (no whole-file text).
 - Renames show `← old path`; binaries get a badge; merges are diffed against the first parent.
 - Every click is its **own tab**, so two commits can be read side by side.
@@ -99,7 +99,7 @@ sequenceDiagram
   participant P as Panel
   participant H as Host
   participant G as git
-  U->>P: Click a history row
+  U->>P: Click a Graph row
   P->>H: open tab + commitDiff(sha)
   H->>G: git show (per-file patch)
   G-->>H: file list + changes
@@ -109,19 +109,19 @@ sequenceDiagram
 
 ![Commit diff](docs/images/04-commit-diff.png)
 
-> A commit tab opened from a history row: one block per file, changed hunks only.
+> A commit tab opened from a Graph row: one block per file, changed hunks only.
 
-### History and branch lanes
+### Graph and branch lanes
 
 - The commit list on the left; an SVG lane rail on the right. Merges bend outwards, the main line keeps one column and branches open to its right.
-- The rail follows the **checked-out branch** by default, the way Cursor does; press "Branch / All refs" in the history header to widen it.
-- A ref badge marks the **checkout, its published copy, the default branch and tags**. Branches that are none of these stay in the hover card and the branch menu.
+- The rail draws **every local and remote branch and tag** by default: once a colleague pushes, press Fetch in the Graph header and their branch opens on its own lane, ready to track and merge. “My branch / All refs” narrows it back to your own line.
+- A ref badge names every ref a row carries: the checkout, published copies, a colleague’s branch and tags (two per row, the rest fold into `+N`).
 - Hover a commit for sha, author, time, message and `N files +X −Y`.
 - Ten commits by default, expandable to forty.
 
 ![Commit hover card](docs/images/05-hover.png)
 
-> Hovering a history row: sha, author, time, message and the stat line.
+> Hovering a Graph row: sha, author, time, message and the stat line.
 
 ### Worktrees (parallel Agent work)
 
@@ -162,7 +162,7 @@ flowchart LR
 
 ### 2. I want to see what a commit changed
 
-1. Scroll to **History**.
+1. Scroll to **Graph**.
 2. Click the row → a **Commit diff** tab opens.
 3. With many files, fold file headers or press **Collapse all**.
 
@@ -193,7 +193,7 @@ Suggested: dark theme, PNG; blur tokens and private repository names before uplo
 
 | File | What it shows |
 | --- | --- |
-| `00-overview.png` | The whole right-hand Git column (branch bar, commit box, change list, history, GitHub) |
+| `00-overview.png` | The whole right-hand Git column (branch bar, commit box, change list, Graph, GitHub) |
 | `01-start.png` | The Start page and the Source Control card |
 | `04-commit-diff.png` | The commit diff tab (files stacked vertically) |
 | `05-hover.png` | The commit hover card (sha, author, time, message, stats) |
@@ -207,7 +207,7 @@ Suggested: dark theme, PNG; blur tokens and private repository names before uplo
 | No "源代码管理" card in the sidebar | No session, or the plugin hasn't loaded | Open a session; press `Ctrl+R` to reload |
 | `unknown action: commitDiff` | The page is new but the **Host process is old** | Fully quit DSH Desktop (menu/tray) and relaunch — `Ctrl+R` is not enough |
 | Edits don't show up | The panel only polls `status` every 8s | Press refresh, or focus the window |
-| A branch's commits are missing | History only reads local refs | `Fetch` first |
+| A colleague's new branch is missing | The Graph reads the remote-tracking refs this clone already has | Press Fetch in the Graph header, or `Fetch` first |
 | Push fails | No git credentials on this machine | Run `git push` once in a terminal so Credential Manager stores them |
 | Blank / broken panel | The client bundle is stale or broken | `npm run build`, then `Ctrl+R` |
 
@@ -274,8 +274,8 @@ docs/               design.md, worktrees.md, commit-diff.md, reviews/
 
 ```bash
 npm run build        # src/ → lib/ (lib is checked in)
-npm run verify       # 147 checks: engine, actions, HTTP guards against real git
-npm run test:render  # 177 checks: jsdom + real React rendering
+npm run verify       # 150 checks: engine, actions, HTTP guards against real git
+npm run test:render  # 180 checks: jsdom + real React rendering
 ```
 
 ### Security boundaries

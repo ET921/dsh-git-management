@@ -244,6 +244,7 @@ function GitPanel(props) {
         branches: state.branches,
         t,
         lang,
+        busy,
         expanded: showAllHistory,
         onToggle: () => setShowAllHistory((value) => !value),
         scope: state.logScope,
@@ -275,20 +276,23 @@ const HISTORY_PREVIEW = 10
  * name is only a local branch if this checkout actually has one by that name.
  * Everything else is a remote.
  *
- * The rail labels at most three things per commit: the checkout, the checkout's
- * published copy, and the repository's default branch (`defaultRemote`, read
- * from `refs/remotes/<remote>/HEAD`). Tags ride along. Every other ref is a
- * topic branch on someone else's line of work: on a repository with 52 branches
- * about half the rows of a 40-row window carry one, and a row that starts with
- * two chips has four characters left for the subject. The branch menu and the
- * hover card still list every ref pointing at a commit, so nothing is lost —
- * only the rail is quiet.
+ * The graph view labels every ref a row carries, because "whose line is this,
+ * and where did it come from" is the question it exists to answer: a
+ * colleague's pushed branch is a cloud chip on the lane its commits sit in,
+ * next to the checkout's own line. A row shows two chips and folds the rest
+ * into `+N` (their names are in its tooltip), so a merge carrying five refs
+ * still leaves room for the subject.
+ *
+ * The narrow scope (`head`) keeps the older, quieter rule below: only the
+ * checkout, its published copy, the repository's default branch
+ * (`defaultRemote`, read from `refs/remotes/<remote>/HEAD`) and tags are named.
  *
  * @param commit - one log row.
  * @param branches - the `branches` action result, or null before it arrives.
+ * @param scope - `'head'` or `'all'`, the stored graph scope.
  * @returns `[{ name, kind }]`, `kind` being `head`, `branch`, `remote` or `tag`.
  */
-function historyRefs(commit, branches) {
+function historyRefs(commit, branches, scope = 'head') {
   const local = new Set((branches?.branches ?? []).map((row) => row.name))
   const current = branches?.current ?? null
 
@@ -314,6 +318,13 @@ function historyRefs(commit, branches) {
   // then published copies.
   const rank = { head: 0, tag: 1, remote: 2, branch: 3, detached: 4 }
   decorated.sort((a, b) => rank[a.kind] - rank[b.kind])
+
+  if (scope === 'all') {
+    // `origin/HEAD` is the server's symbolic pointer, not a branch of its own;
+    // git decorates it as a bare `origin/HEAD`, so `kind` says remote and only
+    // the name gives it away.
+    return decorated.filter((ref) => !(ref.kind === 'remote' && ref.name.endsWith('/HEAD')))
+  }
 
   const shown = []
   const base = branches?.defaultRemote ?? null
@@ -396,15 +407,16 @@ function refScope(kind, t) {
  * change set as its own tab in the same column, the way Cursor's history does.
  * Clicking a second commit opens a second tab; the list itself never moves.
  *
- * @param props - `{ path, log, branches, t, lang, expanded, onToggle, scope, onToggleScope }`.
+ * @param props - `{ path, log, branches, t, lang, busy, expanded, onToggle, scope, onToggleScope }`.
  * @returns the card.
  */
 function HistoryCard(props) {
-  const { path, log, branches, t, lang, expanded, onToggle, scope, onToggleScope } = props
+  const { path, log, branches, t, lang, busy, expanded, onToggle, scope, onToggleScope } = props
   const showingAll = scope === 'all'
   const visible = useMemo(() => (expanded ? log : log.slice(0, HISTORY_PREVIEW)), [log, expanded])
   const layout = useMemo(() => layoutHistory(visible), [visible])
   const railWidth = useMemo(() => graphRailWidth(layout), [layout])
+  const hasRemote = (branches?.remotes ?? []).length > 0
 
   const openCommit = (commit) => {
     if (typeof gmgSidebarBridge.openCommit !== 'function') return
@@ -421,6 +433,20 @@ function HistoryCard(props) {
       t('history'),
       h('span', { className: 'gmg-count' }, ` ${log.length}`),
       h('span', { className: 'gmg-spacer' }),
+      // Pushed work only reaches a remote-tracking ref on fetch, so the graph
+      // needs the fetch where the graph is read, not three cards above it.
+      h(
+        'button',
+        {
+          className: 'gmg-btn is-ghost gmg-graph-fetch',
+          type: 'button',
+          title: t('fetchHint'),
+          'aria-label': t('fetch'),
+          disabled: busy !== null || !hasRemote,
+          onClick: () => gitStore.remote('fetch'),
+        },
+        h(IconRefresh, { size: 12 }),
+      ),
       h(
         'button',
         {
@@ -430,7 +456,7 @@ function HistoryCard(props) {
           'aria-pressed': showingAll,
           onClick: () => onToggleScope?.(showingAll ? 'head' : 'all'),
         },
-        showingAll ? t('scopeAll') : t('scopeHead'),
+        showingAll ? t('showScopeAll') : t('showScopeHead'),
       ),
       h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: onToggle }, expanded ? t('showLess') : t('showMore')),
     ),
@@ -443,7 +469,7 @@ function HistoryCard(props) {
             h(HistoryGraph, { key: 'rail', rows: layout }),
             layout.map((row) => {
               const commit = row.commit
-              const refs = historyRefs(commit, branches)
+              const refs = historyRefs(commit, branches, scope)
               const shown = refs.slice(0, 2)
               const extra = refs.length - shown.length
               const open = () => openCommit(commit)

@@ -21,7 +21,16 @@ Cursor 是 VS Code 的分支，它的 Source Control 面板就是 VS Code 內建
 - **住在右側欄，用 tab 而不是蓋住對話**：清單與對話留在原位；檔案差異、提交差異各自是一個分頁，`sidebarRightTabs` 的 `multiple` 讓每次點提交都是獨立分頁。
 - **每個動作都是「讀 git → 回 JSON → 重畫」**：Host 不保存狀態，`status` 是唯一真相；面板在可見時每 8 秒只重讀 `status`，所以終端裡的 commit、fetch 也會立刻反映。
 
-## 差異的兩個尺度
+## Graph 的視角：團隊，而不是只有自己
+
+Graph 讀的是 `git log --all HEAD`：本機分支、遠端追蹤分支（`refs/remotes/*`）與標籤都進來，`HEAD` 單獨補上，因為 detached checkout 不是 ref，`--all` 會漏掉它。
+
+- **預設畫全部引用**：同事把分支推上遠端後，本機要 `fetch` 才會出現 remote-tracking ref；Graph 標頭有一顆獲取鈕，按下去就重讀。這是「跟蹤別人的線」和「只看自己的 log」的差別。
+- **徽章標每一列身上的 ref**：檢出、遠端副本、同事的分支、標籤都掛得上；一列最多兩枚，其餘收進 `+N`，滑過去看完整名稱。`origin/HEAD` 是遠端的符號指標，不當成分支。
+- **「我的分支」可縮回單線**：`git log HEAD`，和 Cursor 的預設一樣，適合 repo 分支很多時清空畫面。
+- 合併本身仍走既有的 `pull --ff-only` 或終端；Graph 負責讓「哪條線、離我多遠、要併誰」先看得見。
+
+
 
 - **檔案差異**：`git diff`（或 `--cached`），可切全文／僅變更、統一／並排；patch 解析集中在 `src/client/15-diff.js`。
 - **提交差異**：`git show --numstat -z` 取檔案清單，再逐檔用 `:(literal)` pathspec 讀 patch；改名同時給舊、新路徑；merge 以第一父提交為基準。細節見 [commit-diff.md](commit-diff.md)。

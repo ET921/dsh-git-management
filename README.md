@@ -9,7 +9,7 @@
 
 ![面板總覽](docs/images/00-overview.png)
 
-> 整個右側 Git 分欄：分支列、提交框、變更清單、歷史、GitHub。
+> 整個右側 Git 分欄：分支列、提交框、變更清單、Graph、GitHub。
 
 ---
 
@@ -25,7 +25,7 @@ flowchart LR
   B --> C["卡片：源代码管理"]
   C --> D["Git 分頁"]
   D --> E["變更清單"]
-  D --> F["歷史提交"]
+  D --> F["Graph"]
   D --> G["工作樹"]
   D --> H["GitHub"]
   E --> I["檔案差異分頁"]
@@ -56,7 +56,7 @@ flowchart TB
   P --> B["提交框<br/>訊息、全部暫存、amend"]
   P --> C["變更清單<br/>已暫存／更改／衝突"]
   P --> D["工作樹<br/>這份 repo 的所有 checkout"]
-  P --> E["歷史提交<br/>提交列＋分支軌道"]
+  P --> E["Graph<br/>提交列＋分支軌道"]
   P --> F["GitHub<br/>repo 資訊、PR、Issue"]
 ```
 
@@ -66,7 +66,7 @@ flowchart TB
 | 提交框 | 寫訊息、按提交 |
 | 變更清單 | 哪些檔案改了；點檔案看差異 |
 | 工作樹 | 同一個 repo 的多個資料夾（讓 Agent 平行工作） |
-| 歷史提交 | 過去發生什麼；點一列看那次改了什麼 |
+| Graph | 整個團隊的提交線；點一列看那次改了什麼 |
 | GitHub | 不用開瀏覽器就能看 PR／Issue、開 PR |
 
 ---
@@ -88,7 +88,7 @@ flowchart TB
 
 ### 看某一次提交改了什麼
 
-- 歷史任一列點下去 → 右欄開一個新的「**提交差異**」分頁。
+- Graph 任一列點下去 → 右欄開一個新的「**提交差異**」分頁。
 - 每個檔案一個區塊、**竪著排**；只畫有變更的 hunk（不載入全文）。
 - 改名會顯示 `← 舊路徑`；二進位檔標「二進位」；merge 依第一父提交畫。
 - 每次點擊都是**獨立分頁**，兩個提交可以並排看。
@@ -99,7 +99,7 @@ sequenceDiagram
   participant P as 面板
   participant H as Host
   participant G as git
-  U->>P: 點歷史某一列
+  U->>P: 點 Graph 某一列
   P->>H: 開分頁 + commitDiff(sha)
   H->>G: git show（逐檔 patch）
   G-->>H: 檔案清單 + 變更
@@ -109,19 +109,19 @@ sequenceDiagram
 
 ![提交差異](docs/images/04-commit-diff.png)
 
-> 點歷史一列開的提交分頁：每個檔案一個區塊，只畫有變更的 hunk。
+> 點 Graph 一列開的提交分頁：每個檔案一個區塊，只畫有變更的 hunk。
 
-### 歷史與分支軌道
+### Graph 與分支軌道
 
 - 左邊是提交列（主旨＋ref 徽章），右邊是 SVG 分支軌道：merge 是彎出去的邊，主線固定在同一欄，分支只在右側開。
-- 預設只走**當前分支**這條線，和 Cursor 一樣；要連其他分支一起看，按歷史標頭的「當前分支／全部分支」。
-- ref 徽章只標**當前檢出、它的已發佈副本、預設分支與標籤**。指向同一提交的其他分支不掛徽章，它們在 hover 卡與分支下拉裡。
+- 預設畫**所有本機與遠端分支、標籤**：同事推上遠端後，按 Graph 標頭的「獲取」，他／她的分支就會開在自己的軌道上，方便追蹤與合併。按「我的分支／全部引用」可縮回只自己的線。
+- ref 徽章會標出每一列身上的 ref：檢出、遠端副本、同事的分支與標籤（一行最多兩枚，其餘收進 `+N`）。
 - hover 提交可看 sha、作者、時間、內文、`N 個檔案 +X −Y`。
 - 預設顯示 10 筆，可展開到 40 筆。
 
 ![提交詳情 hover 卡](docs/images/05-hover.png)
 
-> 滑過歷史列的 hover 卡：sha、作者、時間、內文與 `N 個檔案 +X −Y`。
+> 滑過 Graph 列的 hover 卡：sha、作者、時間、內文與 `N 個檔案 +X −Y`。
 
 ### 工作樹（讓 Agent 平行工作）
 
@@ -162,7 +162,7 @@ flowchart LR
 
 ### 2. 我想看某次提交改了什麼
 
-1. 往下滑到「歷史提交」。
+1. 往下滑到「Graph」。
 2. 點那一列 → 右欄開「提交差異」。
 3. 檔案多時可用檔頭折疊，或按「收合全部」。
 
@@ -193,7 +193,7 @@ flowchart LR
 
 | 檔案 | 畫面 |
 | --- | --- |
-| `00-overview.png` | 整個右側 Git 分欄（分支列、提交框、變更清單、歷史、GitHub） |
+| `00-overview.png` | 整個右側 Git 分欄（分支列、提交框、變更清單、Graph、GitHub） |
 | `01-start.png` | 右欄「開始」頁與「源代码管理」卡片 |
 | `04-commit-diff.png` | 提交差異分頁（多檔案竪排） |
 | `05-hover.png` | 提交 hover 卡（sha、作者、時間、內文、統計） |
@@ -207,7 +207,7 @@ flowchart LR
 | 右欄沒有「源代码管理」卡片 | 沒開 session，或外掛還沒載入 | 先開一個 session；`Ctrl+R` 重載頁面 |
 | 顯示 `unknown action: commitDiff` | 頁面是新版、**Host 還是舊的 process** | 從選單／托盤「完全結束」DSH Desktop 再開（`Ctrl+R` 不夠） |
 | 改了程式碼但面板沒變 | 面板每 8 秒只讀 `status` | 按一下重新整理，或切回視窗觸發刷新 |
-| 看不到某個分支的提交 | 歷史只讀本機已有的 ref | 先 `Fetch` |
+| 看不到同事剛推的分支 | Graph 讀的是本機已有的 remote-tracking ref | 按 Graph 標頭的獲取，或先 `Fetch` |
 | 推送失敗 | 本機 git 憑證沒設定 | 在終端 `git push` 一次，讓 Credential Manager 記住 |
 | 面板空白／壞掉 | client bundle 沒 build 或壞了 | `npm run build` 後 `Ctrl+R` |
 
@@ -274,8 +274,8 @@ docs/               design.md、worktrees.md、commit-diff.md、reviews/
 
 ```bash
 npm run build        # src/ → lib/（lib 是入庫的產物）
-npm run verify       # 147 項：對真的 git 驗引擎、動作、HTTP 守衛
-npm run test:render  # 177 項：jsdom + 真的 React 渲染面板
+npm run verify       # 150 項：對真的 git 驗引擎、動作、HTTP 守衛
+npm run test:render  # 180 項：jsdom + 真的 React 渲染面板
 ```
 
 ### 安全邊界

@@ -488,6 +488,14 @@ check('commit button is rendered disabled without a message', container.querySel
   )
   check('the card reads its theme-aware surface', /\.gmg-card\s*\{[^}]*var\(--gmg-surface\)/.test(css))
   check('a button reads its theme-aware surface', /\.gmg-btn\s*\{[^}]*var\(--gmg-control\)/.test(css))
+  // The brand fill is near-white in the dark theme and near-black in the light
+  // one, so a hardcoded white label disappeared into the dark theme's button.
+  // The ink has to be the surface colour the accent is paired with.
+  check(
+    'a primary button inks its label with the surface, not a hardcoded white',
+    /\.gmg-btn\.is-primary\s*\{[^}]*color:\s*var\(--dsw-alias-bg-base\)/.test(css),
+    css.match(/\.gmg-btn\.is-primary[^}]*\}/)?.[0],
+  )
 }
 check('history subject is rendered', text().includes('wire the sidebar panel'), text().slice(0, 600))
 
@@ -508,9 +516,14 @@ check('history subject is rendered', text().includes('wire the sidebar panel'), 
   const chipsOf = (subject) => [...(rowFor(subject)?.querySelectorAll('.gmg-ref') ?? [])].map((chip) => chip.textContent)
   check('the current branch is labelled on its commit', container.querySelector('.gmg-ref.is-head')?.textContent === 'main', container.querySelector('.gmg-ref.is-head')?.textContent)
   check('the checkout is labelled with its published copy', chipsOf('wire the sidebar panel').join('|') === 'main|origin/main', chipsOf('wire the sidebar panel'))
-  check('a topic remote that is not the base gets no chip', chipsOf('main line change').length === 0, chipsOf('main line change'))
-  check('a local branch with a published copy is one chip, the remote', chipsOf('side branch change').join('|') === 'origin/dev', chipsOf('side branch change'))
-  check('a local branch that is not the checkout gets no chip', container.querySelector('.gmg-ref.is-branch') === null, [...container.querySelectorAll('.gmg-ref')].map((ref) => ref.className))
+  check('a topic remote is labelled in the graph view', chipsOf('main line change').join('|') === 'origin/release', chipsOf('main line change'))
+  check('a local branch and its published copy are both labelled', chipsOf('side branch change').join('|') === 'origin/dev|dev', chipsOf('side branch change'))
+  check('a local branch carries its own chip', container.querySelector('.gmg-ref.is-branch')?.textContent === 'dev', [...container.querySelectorAll('.gmg-ref.is-branch')].map((ref) => ref.textContent))
+  // The graph is the collaboration view: it opens on every ref (so a
+  // colleague's pushed branch has a lane) and puts the fetch that brings those
+  // refs in beside the list itself.
+  check('the graph opens on every ref', container.querySelector('.gmg-scope')?.textContent === '全部引用', container.querySelector('.gmg-scope')?.textContent)
+  check('the graph offers a fetch beside the list', container.querySelector('.gmg-graph-fetch') !== null, container.querySelector('.gmg-group-head')?.innerHTML?.slice(0, 240))
 
   // Where a ref lives is shown twice: colour, and a glyph for readers who
   // cannot rely on the hue.

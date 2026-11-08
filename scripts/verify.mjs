@@ -192,6 +192,33 @@ console.log('\n# git engine against a real repository')
     await exec(dir, ['reset', '--hard', baseSha])
     await exec(dir, ['branch', '-D', 'rail-side'])
 
+    // A colleague's pushed branch is only ever a remote-tracking ref here. The
+    // graph has to read those refs, or the panel shows one developer's line and
+    // calls it the team's history.
+    const peerBare = await mkdtemp(join(tmpdir(), 'dsh-git-peer-bare-'))
+    const peerClone = await mkdtemp(join(tmpdir(), 'dsh-git-peer-clone-'))
+    try {
+      await exec(peerBare, ['init', '--bare', '-b', 'main'])
+      await exec(dir, ['remote', 'add', 'peer', peerBare])
+      await exec(dir, ['push', 'peer', 'main:main'])
+      await exec(peerClone, ['clone', peerBare, '.'])
+      await exec(peerClone, ['config', 'user.name', 'Colleague'])
+      await exec(peerClone, ['config', 'user.email', 'colleague@example.com'])
+      await exec(peerClone, ['switch', '-c', 'colleague/fix'])
+      await exec(peerClone, ['commit', '--allow-empty', '-m', 'colleague work'])
+      await exec(peerClone, ['push', 'origin', 'colleague/fix'])
+      await git.fetch(dir, 'peer')
+      const collaboration = await git.log(dir, 20, 'all')
+      check('a colleague push reaches the graph after a fetch', collaboration.some((row) => row.subject === 'colleague work'), collaboration.map((row) => row.subject))
+      check('the colleague branch labels its row as a remote', collaboration.some((row) => (row.refs ?? []).includes('peer/colleague/fix')), collaboration.map((row) => row.refs))
+      const mineOnly = await git.log(dir, 20)
+      check('the narrow scope keeps the colleague line out', mineOnly.every((row) => row.subject !== 'colleague work'), mineOnly.map((row) => row.subject))
+    } finally {
+      await exec(dir, ['remote', 'remove', 'peer'])
+      await rm(peerBare, { recursive: true, force: true })
+      await rm(peerClone, { recursive: true, force: true })
+    }
+
     const detail = await actions.handle('commitDetail', { path: dir, sha: 'HEAD' })
     check('commitDetail carries the subject', detail.subject === 'initial commit', detail)
     check('commitDetail counts the touched files', detail.files === 3, detail)
