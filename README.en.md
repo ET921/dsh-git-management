@@ -37,12 +37,12 @@ flowchart LR
 ## Quick start
 
 1. Open a **session** first (the right sidebar is session-scoped; without one there is no column).
-2. In the right sidebar, go to **Start** and find the third card, **源代码管理**.
+2. In the right sidebar, go to **Start** and scroll to the **源代码管理** card (its position depends on how many plugins you have).
 3. Click it: a Git tab appears and the current workspace's repository is selected for you.
 
 ![Start page and card](docs/images/01-start.png)
 
-> Right column → Start: the third card is Source Control.
+> Right column → Start: scroll down to the Source Control card.
 
 Don't see the panel? Jump to [Troubleshooting](#troubleshooting).
 
@@ -132,7 +132,7 @@ sequenceDiagram
 
 - Detects the origin (ssh/https, GitHub Enterprise included).
 - Stars / forks / open issues, pull request list, issue list, and a one-click "new PR" from the current branch.
-- The token lives in this browser only; pushing uses your machine's own git credentials.
+- The GitHub token lives in this page load's memory only and is never written to browser storage — refill it after a reload; pushing uses your machine's own git credentials.
 
 ### Small extras
 
@@ -274,8 +274,8 @@ docs/               design.md, worktrees.md, commit-diff.md, reviews/
 
 ```bash
 npm run build        # src/ → lib/ (lib is checked in)
-npm run verify       # 150 checks: engine, actions, HTTP guards against real git
-npm run test:render  # 180 checks: jsdom + real React rendering
+npm run verify       # 213 checks: engine, actions, HTTP guards against real git
+npm run test:render  # 297 checks: jsdom + real React rendering
 ```
 
 ### Security boundaries
@@ -283,7 +283,7 @@ npm run test:render  # 180 checks: jsdom + real React rendering
 - `/dsh-git/api` accepts `content-type: application/json` only (which forces a preflight), plus a same-origin check and, when available, `connection.requestRejection`.
 - The request `path` must live inside a registered workspace (or a subdirectory), otherwise 403.
 - File arguments are always `:(literal)` pathspecs; `commitDiff` accepts only a 4–64 hex sha and passes `--no-ext-diff`.
-- The GitHub token lives in localStorage; pushing uses your own git credentials.
+- The GitHub token lives in page-load memory only and is never persisted (localStorage is not used; stale entries from older builds are wiped on load), and it only rides on the `github` action; pushing uses your own git credentials.
 
 ### Known limits
 
@@ -307,7 +307,9 @@ npm run test:render  # 180 checks: jsdom + real React rendering
          name: dsh-git-management
    ```
 
-4. Link the profile's `node_modules`: `mklink /J node_modules\dsh-git-management <this folder>`
+4. Link the profile's `node_modules` (one of the two, depending on your system):
+   - Windows (cmd): `mklink /J node_modules\dsh-git-management <this folder>`
+   - macOS / Linux: `ln -s <this folder> node_modules/dsh-git-management` (run from the profile folder)
 5. Restart DSH Desktop.
 
 ---

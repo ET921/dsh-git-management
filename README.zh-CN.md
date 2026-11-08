@@ -37,12 +37,12 @@ flowchart LR
 ## 30 秒上手
 
 1. 先开一个 **session**（右侧边栏是 session 范围的，没有 session 看不到）。
-2. 右侧栏切到「**开始**」，往下找到第三张卡片「**源代码管理**」。
+2. 右侧栏切到「**开始**」，往下找到「**源代码管理**」卡片（位置依安装的外挂数量而定）。
 3. 点它 → 右栏多一个 Git 分页，默认会选好当前 workspace 的 repo。
 
 ![开始页与卡片](docs/images/01-start.png)
 
-> 右栏「开始」页：第三张卡片就是「源代码管理」。
+> 右栏「开始」页：往下滚动就是「源代码管理」卡片。
 
 没看到面板？直接跳〈卡住了？〉。
 
@@ -132,7 +132,7 @@ sequenceDiagram
 
 - 自动认出 origin（ssh / https、GitHub Enterprise 也行）。
 - 看星标／复刻／issue 数、PR 清单、Issue 清单，从当前分支一键开 PR。
-- Token 只存在这个浏览器；推送走你本机的 git 凭证。
+- GitHub token 只放在本次分页载入的内存里，不写进浏览器存储——重新载入页面要重填；推送走你本机的 git 凭证。
 
 ### 其他小东西
 
@@ -274,8 +274,8 @@ docs/               design.md、worktrees.md、commit-diff.md、reviews/
 
 ```bash
 npm run build        # src/ → lib/（lib 是入库的产物）
-npm run verify       # 147 项：对真的 git 验证引擎、动作、HTTP 守卫
-npm run test:render  # 177 项：jsdom + 真的 React 渲染面板
+npm run verify       # 213 项：对真的 git 验证引擎、动作、HTTP 守卫
+npm run test:render  # 297 项：jsdom + 真的 React 渲染面板
 ```
 
 ### 安全边界
@@ -283,7 +283,7 @@ npm run test:render  # 177 项：jsdom + 真的 React 渲染面板
 - `/dsh-git/api` 只吃 `content-type: application/json`（强制 preflight），加同源检查；有 `connection` 服务时再请它拒绝一次。
 - 请求的 `path` 必须在已注册 workspace 内（或子目录），否则 403。
 - 文件一律用 `:(literal)` pathspec；`commitDiff` 只接受 4–64 位 hex sha，并加 `--no-ext-diff`。
-- GitHub token 只存 localStorage；推送走本机 git 凭据。
+- GitHub token 只放本次分页载入的内存，不落盘（不存 localStorage；旧版残留会在载入时自动清掉），且只附加在 `github` 动作上；推送走本机 git 凭据。
 
 ### 已知边界
 
@@ -307,7 +307,9 @@ npm run test:render  # 177 项：jsdom + 真的 React 渲染面板
          name: dsh-git-management
    ```
 
-4. 在 profile 的 `node_modules` 建链接：`mklink /J node_modules\dsh-git-management <这个文件夹>`
+4. 在 profile 的 `node_modules` 建链接（二选一，看你的系统）：
+   - Windows（cmd）：`mklink /J node_modules\dsh-git-management <这个文件夹>`
+   - macOS / Linux：`ln -s <这个文件夹> node_modules/dsh-git-management`（在 profile 资料夹内执行）
 5. 重启 DSH Desktop。
 
 ---
