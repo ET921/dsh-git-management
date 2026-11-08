@@ -47,7 +47,35 @@ export class GitError extends Error {
     super(message)
     this.name = 'GitError'
     this.details = details
+    // The route's default code; callers override it for a more specific state.
+    this.code = 'git-error'
   }
+}
+
+/**
+ * One argument the route should reject before running git (a branch that is
+ * actually an option, a sha that is a flag, a remote that does not exist).
+ * @param message - human-readable reason.
+ * @returns the error, with the route's stable code.
+ */
+function invalidArgument(message) {
+  const error = new GitError(message, {})
+  error.code = 'invalid-argument'
+  return error
+}
+
+/**
+ * Whether a value can be handed to `git show` as a commit.
+ *
+ * `HEAD` is the panel's default; everything else must be a hexadecimal id. A
+ * value beginning with `-` is a git option (`--output=<file>` overwrites
+ * files), and must never reach the argv array.
+ *
+ * @param value - the candidate ref.
+ * @returns true when the value is `HEAD` or 4–64 hex characters.
+ */
+function isCommitRef(value) {
+  return value === 'HEAD' || /^[0-9a-f]{4,64}$/i.test(value)
 }
 
 /**
@@ -166,7 +194,14 @@ export function createGit(exec) {
     const allowed = options.allowExit ?? [0]
     if (!allowed.includes(result.code)) {
       const detail = firstLine(result.stderr) || firstLine(result.stdout) || `git ${args[0]} exited ${result.code}`
-      throw new GitError(detail, { argv: ['git', ...args], ...result })
+      const error = new GitError(detail, { argv: ['git', ...args], ...result })
+      // The index lock is another process (the panel's own poll, or the user's
+      // terminal) holding git; it is a retryable state, not a bad request.
+      if (/index\.lock|another git process/i.test(String(result.stderr))) {
+        error.code = 'locked'
+        error.status = 409
+      }
+      throw error
     }
     return result
   }
@@ -326,7 +361,29 @@ export function createGit(exec) {
   async function status(cwd) {
     const probed = await probe(cwd)
     if (!probed.isRepo) {
-      return { isRepo: false, path: cwd, root: null, branch: null, upstream: null, ahead: 0, behind: 0, oid: null, staged: [], changes: [], conflicts: [], counts: {} }
+      return { isRepo: false, path: cwd, root: null, gitDir: null, bare: false, branch: null, upstream: null, ahead: 0, behind: 0, oid: null, staged: [], changes: [], conflicts: [] }
+    }
+    if (probed.bare) {
+      // `git status` refuses in a bare repository (exit 128), and the 8-second
+      // poll used to hit that every tick. A bare repository is a read-only
+      // history view: answer with empty lists and let the actions layer refuse
+      // writes with `bare-readonly`.
+      const head = await exec(cwd, ['symbolic-ref', '--short', 'HEAD'], { timeoutMs: 10000 })
+      return {
+        isRepo: true,
+        path: cwd,
+        root: probed.root,
+        gitDir: probed.gitDir,
+        bare: true,
+        branch: head.code === 0 ? String(head.stdout).trim() || null : null,
+        upstream: null,
+        ahead: 0,
+        behind: 0,
+        oid: null,
+        staged: [],
+        changes: [],
+        conflicts: [],
+      }
     }
     const root = probed.root ?? cwd
     const raw = await must(root, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], {
@@ -375,6 +432,7 @@ export function createGit(exec) {
       isRepo: true,
       path: cwd,
       root,
+      gitDir: probed.gitDir,
       bare: false,
       branch: parsed.branch,
       upstream: parsed.upstream,
@@ -543,10 +601,15 @@ export function createGit(exec) {
    * @param scope - `'head'` (the default) or `'all'`.
    */
   async function log(cwd, limit = 30, scope = 'head') {
+    // A non-numeric limit used to interpolate `-nNaN`, which git rejects; the
+    // function then returned [] and the panel showed an empty history. Fall
+    // back to the documented default instead of inventing an error.
+    const requested = Number(limit)
+    const count = Number.isFinite(requested) ? Math.max(1, Math.min(200, Math.trunc(requested))) : 30
     const range = scope === 'all' ? ['--exclude=refs/stash', '--all', 'HEAD'] : ['HEAD']
     const result = await exec(
       cwd,
-      ['log', ...range, '--topo-order', `-n${Math.max(1, Math.min(200, limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%P%x1f%D%x1e'],
+      ['log', ...range, '--topo-order', `-n${count}`, '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%P%x1f%D%x1e'],
       { timeoutMs: 20000 },
     )
     if (result.code !== 0) return []
@@ -627,28 +690,174 @@ export function createGit(exec) {
   }
 
   /**
+   * Validate a branch name before it reaches git's option parser.
+   *
+   * A branch name may not begin with `-` (that is an option), and git's own
+   * refname grammar is the authority for the rest; `check-ref-format --branch`
+   * answers for both an existing and a to-be-created branch.
+   *
+   * @param cwd - repository directory.
+   * @param name - the candidate branch name.
+   * @returns the trimmed name.
+   */
+  async function requireBranchName(cwd, name) {
+    const value = String(name ?? '').trim()
+    if (value === '' || value.startsWith('-')) throw invalidArgument(`invalid branch name: ${value === '' ? '(empty)' : value}`)
+    const check = await exec(cwd, ['check-ref-format', '--branch', value], { timeoutMs: 10000 })
+    if (check.code !== 0) throw invalidArgument(`invalid branch name: ${value}`)
+    return value
+  }
+
+  /**
+   * Validate a remote name against the repository's own remote list.
+   * @param cwd - repository directory.
+   * @param remote - the candidate remote.
+   * @returns the trimmed name.
+   */
+  async function requireRemote(cwd, remote) {
+    const value = String(remote ?? '').trim()
+    if (value === '' || value.startsWith('-')) throw invalidArgument(`invalid remote: ${value === '' ? '(empty)' : value}`)
+    const listed = await exec(cwd, ['remote'], { timeoutMs: 10000 })
+    if (listed.code !== 0) {
+      throw new GitError(firstLine(listed.stderr) || 'git remote failed', { argv: ['git', 'remote'], ...listed })
+    }
+    const names = String(listed.stdout)
+      .split(/\r?\n/)
+      .map((name) => name.trim())
+      .filter((name) => name !== '')
+    if (names.includes(value) === false) throw invalidArgument(`unknown remote: ${value}`)
+    return value
+  }
+
+  /**
    * Switch to a branch, optionally creating it first.
    * @param cwd - repository directory.
-   * @param name - branch name (validated by git itself).
+   * @param name - branch name, validated before it reaches git.
    * @param create - `git switch -c <name>`.
    */
   async function switchBranch(cwd, name, create = false) {
-    if (typeof name !== 'string' || name.trim() === '') throw new GitError('分支名不能为空 / branch name is empty', {})
-    const args = create ? ['switch', '-c', name] : ['switch', name]
+    const branch = await requireBranchName(cwd, name)
+    const args = create ? ['switch', '-c', branch] : ['switch', '--', branch]
     const result = await must(cwd, args, { timeoutMs: 60000 })
-    return { branch: name, summary: firstLine(result.stderr) || firstLine(result.stdout) }
+    return { branch, summary: firstLine(result.stderr) || firstLine(result.stdout) }
   }
 
   /** @param cwd - repository directory. @param remote - remote name. */
   async function fetch(cwd, remote = 'origin') {
-    const result = await must(cwd, ['fetch', '--prune', remote], { timeoutMs: 120000 })
+    const target = await requireRemote(cwd, remote)
+    const result = await must(cwd, ['fetch', '--prune', target], { timeoutMs: 120000 })
     return { summary: firstLine(result.stderr) || 'fetched' }
   }
 
-  /** @param cwd - repository directory. */
-  async function pull(cwd) {
-    const result = await must(cwd, ['pull', '--ff-only', '--no-edit'], { timeoutMs: 180000 })
-    return { summary: firstLine(result.stdout) || firstLine(result.stderr) || 'up to date' }
+  /**
+   * Pull the current branch, either fast-forward-only or by merging.
+   *
+   * `ff` is the historical default and keeps the panel from inventing a merge
+   * commit behind the reader's back. `merge` is the explicit exit for a
+   * diverged branch; a conflict there is a state (the status lists it), not a
+   * transport failure, so it is returned rather than thrown.
+   *
+   * @param cwd - repository directory.
+   * @param mode - `'ff'` (default) or `'merge'`.
+   * @returns `{ summary, mode, conflicts }`.
+   */
+  async function pull(cwd, mode = 'ff') {
+    const strategy = mode === 'merge' ? 'merge' : 'ff'
+    const args = strategy === 'merge' ? ['pull', '--no-rebase', '--no-edit'] : ['pull', '--ff-only', '--no-edit']
+    const result = await exec(cwd, args, { timeoutMs: 180000 })
+    if (result.code !== 0) {
+      // Pull prints fetch progress first ("From <remote>"), so the first line
+      // is not the reason. Keep a readable line for the message but classify
+      // from the complete stderr/stdout.
+      const stderr = String(result.stderr)
+      const stdout = String(result.stdout)
+      const lines = stderr
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line !== '')
+      const message =
+        lines.find((line) => /^(fatal:|error:)|not possible to fast-forward|diverging branches|CONFLICT/i.test(line)) ??
+        lines[0] ??
+        firstLine(stdout) ??
+        `git pull exited ${result.code}`
+      const detail = `${message}\n${stderr}\n${stdout}`
+      if (strategy === 'merge') {
+        const snapshot = await status(cwd).catch(() => null)
+        if ((snapshot?.conflicts?.length ?? 0) > 0) return { summary: message, mode: strategy, conflicts: true }
+      }
+      const error = new GitError(message, { argv: ['git', ...args], ...result })
+      if (strategy === 'ff' && /not possible to fast-forward|diverging branches|diverged/i.test(detail)) {
+        error.code = 'non-fast-forward'
+        error.status = 409
+      } else if (/rebase|merge|cherry-pick|in progress/i.test(detail)) {
+        error.code = 'operation-in-progress'
+        error.status = 409
+      }
+      throw error
+    }
+    return { summary: firstLine(result.stdout) || firstLine(result.stderr) || 'up to date', mode: strategy, conflicts: false }
+  }
+
+  /**
+   * Save the working tree for the narrow stash entry the panel offers.
+   *
+   * Untracked files are deliberately not included (`--include-untracked` is out
+   * of scope); a clean worktree is a successful no-op, not an error.
+   *
+   * @param cwd - repository directory.
+   * @param message - optional stash message.
+   * @returns `{ stashed, summary }`.
+   */
+  async function stashPush(cwd, message = '') {
+    const text = String(message ?? '').trim()
+    if (text.length > 200) throw invalidArgument('stash message is too long')
+    const args = ['stash', 'push']
+    if (text !== '') args.push('-m', text)
+    const result = await exec(cwd, args, { timeoutMs: 60000 })
+    const summary = firstLine(result.stderr) || firstLine(result.stdout)
+    if (result.code !== 0) {
+      throw new GitError(summary || `git stash push exited ${result.code}`, { argv: ['git', ...args], ...result })
+    }
+    return { stashed: /no local changes/i.test(summary) === false, summary: summary || 'stashed' }
+  }
+
+  /**
+   * How many stash entries the repository holds.
+   * @param cwd - repository directory.
+   * @returns the count.
+   */
+  async function stashCount(cwd) {
+    const result = await exec(cwd, ['stash', 'list', '--format=%gd'], { timeoutMs: 10000 })
+    if (result.code !== 0) return 0
+    return String(result.stdout)
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== '').length
+  }
+
+  /**
+   * Restore the most recent stash entry.
+   *
+   * A conflict is a state the status lists, not a failed action: the pop is
+   * reported with `conflicts: true` and the round-1 conflict chain takes over.
+   * An empty stash is a precondition failure and gets `stash-empty`.
+   *
+   * @param cwd - repository directory.
+   * @returns `{ summary, conflicts }`.
+   */
+  async function stashPop(cwd) {
+    const result = await exec(cwd, ['stash', 'pop'], { allowExit: [0, 1], timeoutMs: 60000 })
+    const summary = firstLine(result.stdout) || firstLine(result.stderr)
+    if (result.code === 1 && /no stash entries/i.test(summary)) {
+      const error = new GitError('沒有可取回的 stash / no stash entries to pop', { argv: ['git', 'stash', 'pop'], ...result })
+      error.status = 409
+      error.code = 'stash-empty'
+      throw error
+    }
+    if (result.code !== 0 && result.code !== 1) {
+      throw new GitError(summary || `git stash pop exited ${result.code}`, { argv: ['git', 'stash', 'pop'], ...result })
+    }
+    const snapshot = await status(cwd).catch(() => null)
+    return { summary: summary || 'stashed changes restored', conflicts: (snapshot?.conflicts?.length ?? 0) > 0 }
   }
 
   /**
@@ -678,11 +887,29 @@ export function createGit(exec) {
     // into `git push --set-upstream origin null` — an error the user could not
     // act on. Refuse here, where the message can say what to do instead.
     if (typeof branch !== 'string' || branch.trim() === '') {
-      throw new GitError('detached HEAD：請先切換到分支或建立新分支再推送 / detached HEAD: check out or create a branch before pushing', {})
+      const error = new GitError('detached HEAD：請先切換到分支或建立新分支再推送 / detached HEAD: check out or create a branch before pushing', {})
+      error.code = 'detached-head'
+      error.status = 409
+      throw error
     }
     const args = upstream ? ['push'] : ['push', '--set-upstream', 'origin', branch]
-    const result = await must(cwd, args, { timeoutMs: 180000 })
-    return { summary: firstLine(result.stderr) || firstLine(result.stdout) || 'pushed' }
+    try {
+      const result = await must(cwd, args, { timeoutMs: 180000 })
+      return { summary: firstLine(result.stderr) || firstLine(result.stdout) || 'pushed' }
+    } catch (error) {
+      // `must` keeps only git's first stderr line as the message; the reason a
+      // push was rejected is usually a few lines down, so match the full
+      // captured stderr as well.
+      const message = `${String(error?.message ?? '')}\n${String(error?.details?.stderr ?? '')}`
+      if (/non-fast-forward|fetch first/i.test(message)) {
+        error.code = 'non-fast-forward'
+        error.status = 409
+      } else if (/index\.lock|another git process/i.test(message)) {
+        error.code = 'locked'
+        error.status = 409
+      }
+      throw error
+    }
   }
 
   /** @param cwd - repository directory. */
@@ -829,13 +1056,15 @@ export function createGit(exec) {
    * @returns `{ sha, short, author, email, date, committer, subject, body, files, additions, deletions }`.
    */
   async function commitDetail(cwd, sha) {
+    const ref = String(sha ?? 'HEAD').trim()
+    if (isCommitRef(ref) === false) throw invalidArgument(`not a commit id: ${ref === '' ? '(empty)' : ref}`)
     const format = '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%cn%x1f%s%x1f%b%x1f%P'
-    const info = await must(cwd, ['show', '-s', '--date=iso-strict', format, sha], { timeoutMs: 20000 })
+    const info = await must(cwd, ['show', '-s', '--date=iso-strict', format, ref], { timeoutMs: 20000 })
     const [full, short, author, email, date, committer, subject, body, parents] = String(info.stdout).split('\x1f')
     // `git show --numstat` prints nothing for a merge commit unless told which
     // parent to diff against; the card then claimed "0 files, +0 -0".
     const merge = (parents ?? '').trim().split(' ').filter((parent) => parent !== '').length > 1
-    const stat = await exec(cwd, ['show', '--numstat', '--format=', ...(merge ? ['--diff-merges=first-parent'] : []), sha], { timeoutMs: 20000 })
+    const stat = await exec(cwd, ['show', '--numstat', '--format=', ...(merge ? ['--diff-merges=first-parent'] : []), ref], { timeoutMs: 20000 })
     let files = 0
     let additions = 0
     let deletions = 0
@@ -969,15 +1198,16 @@ export function createGit(exec) {
    * @returns `{ branch, exists, short, author, date, subject, upstream, track }`.
    */
   async function branchDetail(cwd, branch) {
-    const info = await exec(cwd, ['log', '-1', '--date=iso-strict', '--pretty=format:%h%x1f%an%x1f%aI%x1f%s', branch], { timeoutMs: 20000 })
-    if (info.code !== 0) return { branch, exists: false }
+    const name = await requireBranchName(cwd, branch)
+    const info = await exec(cwd, ['log', '-1', '--date=iso-strict', '--pretty=format:%h%x1f%an%x1f%aI%x1f%s', name], { timeoutMs: 20000 })
+    if (info.code !== 0) return { branch: name, exists: false }
     const [short, author, date, subject] = String(info.stdout).split('\x1f')
     // `for-each-ref --format` does not understand `%x1f`, so the separator is a
     // literal NUL — a byte no ref name may contain, unlike `|`.
-    const ref = await exec(cwd, ['for-each-ref', '--format=%(upstream:short)%00%(upstream:track)', `refs/heads/${branch}`], { timeoutMs: 10000 })
+    const ref = await exec(cwd, ['for-each-ref', '--format=%(upstream:short)%00%(upstream:track)', `refs/heads/${name}`], { timeoutMs: 10000 })
     const [upstream, track] = String(ref.stdout).trim().split('\0')
     return {
-      branch,
+      branch: name,
       exists: true,
       short: short ?? null,
       author: author ?? '',
@@ -1000,7 +1230,9 @@ export function createGit(exec) {
    * @returns `{ name, email }`, or null when the commit cannot be read.
    */
   async function commitAuthor(cwd, sha) {
-    const result = await exec(cwd, ['show', '-s', '--pretty=format:%an%x1f%ae', String(sha)], { timeoutMs: 10000 })
+    const ref = String(sha ?? '').trim()
+    if (isCommitRef(ref) === false) return null
+    const result = await exec(cwd, ['show', '-s', '--pretty=format:%an%x1f%ae', ref], { timeoutMs: 10000 })
     if (result.code !== 0) return null
     const [name, email] = String(result.stdout).trim().split('\x1f')
     return { name: name ?? '', email: email ?? '' }
@@ -1038,6 +1270,9 @@ export function createGit(exec) {
     switchBranch,
     fetch,
     pull,
+    stashPush,
+    stashPop,
+    stashCount,
     push,
     abortMerge,
     init,

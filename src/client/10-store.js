@@ -49,10 +49,39 @@ function initialState() {
     github: null,
     /** Busy label, e.g. `commit`, or null. */
     busy: null,
+    /**
+     * Which one operation is in flight, as `action|file|file`. Unlike `busy`
+     * this names its target, so a stage locks only the row it touches
+     * (poweruser G11) instead of greying the whole list.
+     */
+    busyOp: null,
+    /** Epoch of the last successful status read — the header's “更新于 X 前”. */
+    lastSyncedAt: null,
+    /** How many `git stash` entries the menu offers to pop; null until read. */
+    stashCount: null,
     /** Last failure, shown as one dismissible line. */
     error: null,
+    /**
+     * The envelope's stable `code` for that failure (§3.1). The message is for
+     * reading; the code is what picks the one-line next step.
+     */
+    errorCode: null,
+    /** `{ argv, exitCode, stderr }` when the host had a command to show. */
+    errorDetails: null,
+    /** Whether the reader unfolded the failure's details. */
+    errorOpen: false,
     /** Last success, shown as one dismissible line. */
     notice: null,
+    /**
+     * True when `notice` reports something the reader must act on (a pull that
+     * stopped on conflicts) rather than a success; the panel styles it apart.
+     */
+    noticeWarning: false,
+    /**
+     * Bumped when a pull left conflicts. The panel uses it to bring the
+     * conflicts group into view once; the store never touches the DOM itself.
+     */
+    conflictFocusAt: null,
     /** Draft commit message. */
     message: '',
     /** Commit staging preferences. */
@@ -63,6 +92,17 @@ function initialState() {
     /** Whether the GitHub token editor is open. */
     editingToken: false,
   }
+}
+
+/**
+ * The `busyOp` label for a file operation: the action plus its exact targets,
+ * so a row can ask “is *this* operation running on *these* files”.
+ * @param action - the host action.
+ * @param files - repository-relative paths.
+ * @returns the label.
+ */
+function fileOp(action, files) {
+  return `${action}|${[...files].join('|')}`
 }
 
 /**
@@ -89,6 +129,36 @@ function createGitStore() {
   }
 
   /**
+   * Show one transient line. `tone` is `ok` for a success and `warn` for a
+   * state the reader has to act on (merge conflicts); keeping the tone beside
+   * the text stops a later warning from inheriting the green check.
+   * @param text - the line, or null to clear it.
+   * @param tone - `ok` (default) or `warn`.
+   */
+  const setNotice = (text, tone = 'ok') => {
+    set({ notice: text, noticeWarning: tone === 'warn' })
+  }
+
+  /**
+   * Record one failure with the parts S13 keeps: the readable message, the
+   * stable code, and the command tail a reader can paste into a terminal.
+   * A new failure always starts folded: an unfolded block from the last one
+   * would push the message off the top of the column.
+   *
+   * @param message - what to show first.
+   * @param code - the envelope code, or null for a client-side refusal.
+   * @param details - `{ argv?, exitCode?, stderr? }`.
+   */
+  const setError = (message, code = null, details = null) => {
+    set({
+      error: message === null ? null : String(message),
+      errorCode: message === null ? null : code,
+      errorDetails: message === null ? null : details,
+      errorOpen: false,
+    })
+  }
+
+  /**
    * Subscribe to state changes.
    * @param listener - called after every `set`.
    * @returns the unsubscribe function.
@@ -107,22 +177,28 @@ function createGitStore() {
    *
    * @param label - shown while the operation runs.
    * @param operation - the work.
-   * @param options - `{ keepError, guard }`: leave an existing error in place,
-   *   and only record a failure while the guard returns true.
+   * @param options - `{ keepError, guard, op }`: leave an existing error in
+   *   place, only record a failure while the guard returns true, and name the
+   *   in-flight target (`busyOp`) so the UI can lock just that row.
    * @returns the operation's result, or undefined after a failure.
    */
   async function task(label, operation, options = {}) {
     const token = (taskSeq += 1)
-    set(options.keepError === true ? { busy: label } : { busy: label, error: null })
+    const open =
+      options.keepError === true
+        ? { busy: label }
+        : { busy: label, error: null, errorCode: null, errorDetails: null, errorOpen: false }
+    if (typeof options.op === 'string' && options.op !== '') open.busyOp = options.op
+    set(open)
     try {
       return await operation()
     } catch (error) {
       if (typeof options.guard !== 'function' || options.guard()) {
-        set({ error: String(error?.message ?? error) })
+        setError(error?.message ?? error, error?.code ?? null, error?.details ?? null)
       }
       return undefined
     } finally {
-      if (token === taskSeq) set({ busy: null })
+      if (token === taskSeq) set({ busy: null, busyOp: null })
     }
   }
 
@@ -152,6 +228,9 @@ function createGitStore() {
     epoch += 1
     const mine = epoch
     writeStoredRepo(path)
+    // A draft, an amend tick, or a staged-everything flag belongs to the
+    // repository it was made in: carrying them across would commit repo A's
+    // message into repo B with an `add -A` (poweruser G2).
     set({
       path,
       status: null,
@@ -162,11 +241,23 @@ function createGitStore() {
       worktreeStale: false,
       github: null,
       error: null,
+      errorCode: null,
+      errorDetails: null,
+      errorOpen: false,
+      stashCount: null,
       notice: null,
+      noticeWarning: false,
+      conflictFocusAt: null,
+      busyOp: null,
+      lastSyncedAt: null,
+      message: '',
+      stageAll: false,
+      amend: false,
     })
     setDiffState({ target: null, rows: [], pairs: [] })
     await refresh(mine)
     if (mine === epoch) await loadWorktrees()
+    if (mine === epoch) await loadStashCount()
   }
 
   /**
@@ -195,7 +286,8 @@ function createGitStore() {
       { keepError: true, guard: () => mine === epoch },
     )
     if (snapshot === undefined || mine !== epoch) return
-    set({ status: snapshot.status, log: snapshot.log, branches: snapshot.branches })
+    // A whole-panel read is the strongest proof the data is current.
+    set({ status: snapshot.status, log: snapshot.log, branches: snapshot.branches, lastSyncedAt: Date.now() })
   }
 
   /**
@@ -230,7 +322,7 @@ function createGitStore() {
       guard: () => mine === epoch,
     })
     if (status === undefined || mine !== epoch) return
-    set({ status })
+    set({ status, lastSyncedAt: Date.now() })
   }
 
   /**
@@ -271,7 +363,8 @@ function createGitStore() {
     if (state.path === null) return false
     const done = await task('worktree', () => callHost('createWorktree', { path: state.path, name }))
     if (done === undefined) return false
-    set({ worktreeDraft: '', notice: `${done.branch} → ${done.path}` })
+    set({ worktreeDraft: '' })
+    setNotice(`${done.branch} → ${done.path}`)
     await loadWorktrees()
     return true
   }
@@ -285,7 +378,7 @@ function createGitStore() {
     if (state.path === null) return false
     const done = await task('worktree', () => callHost('removeWorktree', { path: state.path, target }))
     if (done === undefined) return false
-    set({ notice: done.summary })
+    setNotice(done.summary)
     await loadWorktrees()
     return true
   }
@@ -295,7 +388,7 @@ function createGitStore() {
     if (state.path === null) return
     const done = await task('worktree', () => callHost('pruneWorktrees', { path: state.path }))
     if (done === undefined) return
-    set({ notice: done.summary })
+    setNotice(done.summary)
     await loadWorktrees()
   }
 
@@ -315,15 +408,15 @@ function createGitStore() {
    */
   async function openWorktreeInDsh(target) {
     if (!canOpenWorkspace()) {
-      set({ error: '這個 GUI 沒有提供工作區服務 / workspace services unavailable' })
+      setError('這個 GUI 沒有提供工作區服務 / workspace services unavailable')
       return false
     }
     try {
       const opened = await openAsWorkspace(target)
-      set({ notice: opened?.title ? `已開啟工作區：${opened.title}` : null })
+      setNotice(opened?.title ? `已開啟工作區：${opened.title}` : null)
       return true
     } catch (error) {
-      set({ error: String(error?.message ?? error) })
+      setError(error?.message ?? error, error?.code ?? null, error?.details ?? null)
       return false
     }
   }
@@ -333,12 +426,14 @@ function createGitStore() {
    * @param action - the host action.
    * @param files - repository-relative paths.
    * @param notice - the line shown on success.
+   * @param options - `{ op }`: the in-flight label (`busyOp`); callers pass
+   *   `fileOp(action, files)` so the UI can lock exactly this row.
    */
-  async function fileAction(action, files, notice) {
+  async function fileAction(action, files, notice, options = {}) {
     if (state.path === null || files.length === 0) return false
-    const done = await task(action, () => callHost(action, { path: state.path, files }))
+    const done = await task(action, () => callHost(action, { path: state.path, files }), { op: options.op })
     if (done === undefined) return false
-    set({ notice })
+    setNotice(notice)
     await refreshStatus()
     return true
   }
@@ -346,33 +441,64 @@ function createGitStore() {
   /** Stage every change. */
   async function stageAll() {
     const files = [...(state.status?.changes ?? [])].map((row) => row.path)
-    await fileAction('stage', files, null)
+    await fileAction('stage', files, null, { op: fileOp('stage', files) })
   }
 
   /** Unstage everything currently staged. */
   async function unstageAll() {
     const files = [...(state.status?.staged ?? [])].map((row) => row.path)
-    await fileAction('unstage', files, null)
+    await fileAction('unstage', files, null, { op: fileOp('unstage', files) })
   }
 
   /**
    * Commit the index (or everything, when "stage all" is on).
+   * @param options - `{ op }`: in-flight label for the row-lock machinery.
    * @returns true when the commit landed.
    */
-  async function commit() {
+  async function commit(options = {}) {
     if (state.path === null) return false
     const message = state.message.trim()
     if (message === '') {
-      set({ error: '请先填写提交信息 / write a commit message first' })
+      setError('请先填写提交信息 / write a commit message first', 'invalid-argument')
       return false
     }
-    const done = await task('commit', () =>
-      callHost('commit', { path: state.path, message, amend: state.amend, stageAll: state.stageAll }),
+    const done = await task(
+      'commit',
+      () => callHost('commit', { path: state.path, message, amend: state.amend, stageAll: state.stageAll }),
+      { op: options.op },
     )
     if (done === undefined) return false
-    set({ message: '', amend: false, stageAll: false, notice: done.summary || 'committed' })
+    set({ message: '', amend: false, stageAll: false })
+    setNotice(done.summary || 'committed')
     await refresh()
     return true
+  }
+
+  /**
+   * Fill the draft with HEAD's complete message for an amend (poweruser G3).
+   *
+   * A plain amend replaces the whole message, so importing only the subject
+   * would silently drop the body. The read is best-effort: it is a quiet
+   * `commitDetail`, never a busy/error write (a failed preview must not clear
+   * the panel's error). It may replace a *pristine* draft — empty, or exactly
+   * the subject the toggle itself just previewed — but never words the reader
+   * has typed, and a late answer is dropped when amend is no longer ticked.
+   */
+  async function loadFullMessage() {
+    if (state.path === null || state.amend !== true) return
+    const headSubject = String(state.log[0]?.subject ?? '')
+    const pristine = () => state.message === '' || state.message === headSubject
+    if (!pristine()) return
+    try {
+      const detail = await callHost('commitDetail', { path: state.path, sha: 'HEAD' })
+      if (state.amend !== true || !pristine()) return
+      const subject = String(detail?.subject ?? '')
+      const body = typeof detail?.body === 'string' ? detail.body : ''
+      if (subject === '') return
+      set({ message: body === '' ? subject : `${subject}\n\n${body}` })
+    } catch {
+      /* the draft keeps the subject-only fallback; nothing else to undo */
+    }
   }
 
   /**
@@ -384,7 +510,8 @@ function createGitStore() {
     if (state.path === null || name === '') return false
     const done = await task('branch', () => callHost('switch', { path: state.path, branch: name, create: true }))
     if (done === undefined) return false
-    set({ creatingBranch: false, notice: done.summary || name })
+    set({ creatingBranch: false })
+    setNotice(done.summary || name)
     await refresh()
     return true
   }
@@ -397,20 +524,77 @@ function createGitStore() {
     if (state.path === null) return
     const done = await task('branch', () => callHost('switch', { path: state.path, branch: name }))
     if (done === undefined) return
-    set({ notice: done.summary || name })
+    setNotice(done.summary || name)
     await refresh()
   }
 
   /**
    * Run one remote operation (`fetch`, `pull`, `push`).
+   *
+   * A pull is the one call that can stop halfway without failing: git leaves
+   * the conflicts in the index and returns normally. Painting that as a
+   * success would be a lie, so the warning lands as a warning and the terms it
+   * produced are the next thing the panel shows.
+   *
    * @param kind - which one.
    */
-  async function remote(kind) {
+  async function remote(kind, params = {}) {
     if (state.path === null) return
-    const done = await task(kind, () => callHost(kind, { path: state.path }))
+    const done = await task(kind, () => callHost(kind, { path: state.path, ...params }))
     if (done === undefined) return
-    set({ notice: done.summary || kind })
+    if (kind === 'pull' && done.conflicts === true) {
+      await refresh()
+      setNotice('合併衝突：解決後標記為已解決，再提交 / Merge conflicts — resolve, mark, then commit', 'warn')
+      set({ conflictFocusAt: Date.now() })
+      return
+    }
+    setNotice(done.summary || kind)
     await refresh()
+  }
+
+  /**
+   * Read how many stash entries exist, for the ⋯ menu's count.
+   *
+   * Best-effort and quiet: a host that predates the action (404) must not put
+   * an error line on the panel just because the reader has no stash yet.
+   */
+  async function loadStashCount() {
+    if (state.path === null) return
+    try {
+      const done = await callHost('stash', { path: state.path, op: 'count' })
+      if (typeof done?.count === 'number') set({ stashCount: done.count })
+    } catch {
+      set({ stashCount: 0 })
+    }
+  }
+
+  /**
+   * The narrow stash surface (plan-v2 §3.4): `push`, `pop`, and the count the
+   * menu already reads. A pop that lands conflicts is reported as a state —
+   * the conflicts group is the next thing the reader needs, not an error line.
+   *
+   * @param op - `push` or `pop`.
+   * @param message - optional message for `push` (≤200 chars, host-checked).
+   * @returns true when the operation was accepted by the host.
+   */
+  async function stash(op, message) {
+    if (state.path === null) return false
+    const params = { path: state.path, op }
+    if (op === 'push' && typeof message === 'string' && message.trim() !== '') params.message = message.trim().slice(0, 200)
+    const done = await task('stash', () => callHost('stash', params))
+    if (done === undefined) return false
+    if (typeof done.count === 'number') set({ stashCount: done.count })
+    if (op === 'pop' && done.conflicts === true) {
+      await refresh()
+      setNotice('貯藏套用時發生衝突：解決後標記為已解決 / Stash conflicts — resolve, mark, then commit', 'warn')
+      set({ conflictFocusAt: Date.now() })
+      await loadStashCount()
+      return true
+    }
+    setNotice(op === 'push' ? done.summary || 'stashed' : done.summary || 'stash popped')
+    await refresh()
+    await loadStashCount()
+    return true
   }
 
   /** Abort an in-progress merge (`git merge --abort`). */
@@ -418,7 +602,7 @@ function createGitStore() {
     if (state.path === null) return
     const done = await task('abortMerge', () => callHost('abortMerge', { path: state.path }))
     if (done === undefined) return
-    set({ notice: done.summary || 'merge aborted' })
+    setNotice(done.summary || 'merge aborted')
     await refresh()
   }
 
@@ -427,7 +611,7 @@ function createGitStore() {
     if (state.path === null) return
     const done = await task('init', () => callHost('init', { path: state.path }))
     if (done === undefined) return
-    set({ notice: 'repository initialised' })
+    setNotice('repository initialised')
     await refresh()
   }
 
@@ -475,17 +659,18 @@ function createGitStore() {
     if (state.path === null) return null
     const result = await task('pr', () => callHost('github', { path: state.path, action: 'createPull', ...input }))
     if (result === undefined) return null
-    set({ notice: `PR #${result.pull?.number} created` })
+    setNotice(`PR #${result.pull?.number} created`)
     await loadGithub('pulls')
     return result.pull ?? null
   }
 
   /**
-   * Store or clear the GitHub token, then re-read the GitHub card.
+   * Remember or clear the GitHub token for this page load (never persisted),
+   * then re-read the GitHub card.
    * @param token - the token, or null to forget it.
    */
   async function saveToken(token) {
-    writeToken(token === null || token.trim() === '' ? null : token.trim())
+    rememberToken(token === null || token.trim() === '' ? null : token.trim())
     set({ editingToken: false, github: null })
     if (state.path !== null) await loadGithub('repo')
   }
@@ -515,12 +700,19 @@ function createGitStore() {
     abortMerge,
     initRepo,
     loadGithub,
+    loadFullMessage,
+    stash,
+    loadStashCount,
     createPull,
     saveToken,
     setMessage: (message) => set({ message }),
     setWorktreeDraft: (value) => set({ worktreeDraft: value }),
     setFlag: (flag, value) => set({ [flag]: value }),
-    dismiss: () => set({ error: null, notice: null }),
+    dismiss: () => set({ error: null, errorCode: null, errorDetails: null, errorOpen: false, notice: null, noticeWarning: false }),
+    /** Fold or unfold the failure's command tail (S13). */
+    toggleErrorOpen: () => set({ errorOpen: state.errorOpen !== true }),
+    /** The auto-fade only ever drops the notice; an error waits for its reader. */
+    dismissNotice: () => set({ notice: null, noticeWarning: false }),
   }
 }
 

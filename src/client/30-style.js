@@ -44,7 +44,10 @@ const PANEL_CSS = `
     --gmg-head-ink: #ffffff;
     --gmg-remote: #7c3aed;
     --gmg-remote-soft: rgba(124, 58, 237, .16);
-    --gmg-tag: #b45309;
+    /* #b45309 measured 4.95:1 at best (3.5:1 on its own soft chip) on this
+       surface — under the 4.5:1 small-text floor. #92400e is the same amber
+       family and lands at 5:1 on the chip (round2 D1). Dark keeps #f59e0b. */
+    --gmg-tag: #92400e;
     --gmg-tag-soft: rgba(180, 83, 9, .16);
     --gmg-ok: #15803d;
     --gmg-warn: #b45309;
@@ -98,7 +101,18 @@ const PANEL_CSS = `
 .gmg-head-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
 .gmg-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; letter-spacing: .01em; }
 .gmg-sub { color: var(--dsw-alias-label-secondary); font-size: 12px; font-family: var(--gmg-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The bare-repository badge: a read-only warning in chip clothing, in the warn
+   family the panel uses for "this state is unusual" (same tone token as
+   .gmg-wt-tag.is-warn). */
+.gmg-bare {
+  flex: none; font-size: 10.5px; line-height: 1.6; padding: 0 6px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 45%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+}
 .gmg-head-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+/* The "updated X ago" tag is the first thing to give way on a 360px column:
+   fixed-width single line, clipped, so the repo select keeps its width. */
+.gmg-last-sync { flex: none; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gmg-select {
   max-width: 240px;
   height: 28px;
@@ -111,6 +125,24 @@ const PANEL_CSS = `
   outline: none;
 }
 .gmg-select:hover { border-color: var(--dsw-alias-border-l2); }
+/* Repo switcher is the panel's primary navigation control; the outline:none
+   above removed its only focus cue, so the ring has to come back here
+   (round2 C1: keyboard focus was invisible). */
+.gmg-select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+/* The branch-bar "more" trigger: a ghost square a size step under the icon
+   buttons (24px against 28), so it reads as auxiliary next to the sync row. */
+.gmg-morebtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.gmg-morebtn:hover { background: var(--gmg-hover); color: var(--dsw-alias-label-primary); }
+.gmg-morebtn:disabled { opacity: .4; cursor: default; }
 .gmg-icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; padding: 0;
@@ -152,10 +184,13 @@ const PANEL_CSS = `
 .gmg-branch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The portalled surfaces sit outside .gmg-root, so they carry the mono stack
    the panel defines there: a custom property does not cross that boundary. */
-.gmg-hover, .gmg-branchmenu {
+.gmg-hover, .gmg-branchmenu, .gmg-moremenu {
   --gmg-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
-.gmg-branchmenu {
+/* The branch list and the "more" action list share one floating-surface spec
+   (same corner, border, shadow): what differs is the ARIA semantics underneath
+   — listbox for the checkout picker, menu for the actions (design.md). */
+.gmg-branchmenu, .gmg-moremenu {
   position: fixed; z-index: 4100;
   padding: 4px;
   display: flex; flex-direction: column; gap: 1px;
@@ -165,16 +200,19 @@ const PANEL_CSS = `
   background: color-mix(in srgb, var(--dsw-alias-bg-overlay) 93%, var(--dsw-alias-label-primary) 7%);
   box-shadow: 0 14px 36px rgba(0, 0, 0, .45);
 }
-.gmg-branchitem {
+.gmg-branchitem, .gmg-moreitem {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 8px; border-radius: 7px;
   font-family: var(--gmg-mono); font-size: 12px;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
 }
-.gmg-branchitem.is-active { background: var(--gmg-hover); }
+.gmg-branchitem.is-active, .gmg-moreitem.is-active { background: var(--gmg-hover); }
 .gmg-branchitem.is-current { color: var(--dsw-alias-brand-primary); }
-.gmg-branchitem-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A disabled action stays visitable and silent for the pointer, but has to
+   read as "not offered now" — half the ink, no pointer hand. */
+.gmg-moreitem[aria-disabled="true"] { opacity: .45; cursor: default; }
+.gmg-branchitem-name, .gmg-moreitem-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gmg-branchcheck { display: inline-flex; flex: none; }
 .gmg-branchmenu-empty { padding: 8px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .gmg-branch.is-detached { color: var(--dsw-alias-state-warn-primary); }
@@ -268,7 +306,9 @@ const PANEL_CSS = `
 }
 .gmg-collapse[aria-expanded="true"] { transform: rotate(0deg); color: var(--dsw-alias-label-primary); }
 .gmg-collapse:hover:not(:disabled) { background: var(--gmg-hover); color: var(--dsw-alias-label-primary); }
-.gmg-collapse:focus-visible { outline: 2px solid var(--gmg-local); outline-offset: 1px; }
+/* Focus rings use one hue panel-wide; the collapse button used the lane blue
+   (--gmg-local) here, which made the two keyboard cues disagree (round2 C5). */
+.gmg-collapse:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .gmg-collapse:disabled { opacity: .35; cursor: default; }
 .gmg-group.is-collapsed .gmg-group-head { border-bottom: none; }
 .gmg-group-head .gmg-icon-btn { width: 22px; height: 22px; }
@@ -356,10 +396,14 @@ const PANEL_CSS = `
   background: var(--gmg-tag-soft);
   border-color: color-mix(in srgb, var(--gmg-tag) 45%, transparent);
 }
+/* The detached chip rides the tag ink, not the warn ink: the two inks are the
+   same amber in dark (#f59e0b both), but in light the warn ink is 4.32:1 on
+   this chip's surface — below the small-text floor the tag ink clears
+   (round2 D1 companion fix). */
 .gmg-ref.is-detached {
-  color: var(--gmg-warn);
+  color: var(--gmg-tag);
   background: var(--gmg-tag-soft);
-  border-color: color-mix(in srgb, var(--gmg-warn) 45%, transparent);
+  border-color: color-mix(in srgb, var(--gmg-tag) 45%, transparent);
 }
 .gmg-ref svg { flex: none; opacity: 1; }
 /* The name is its own flex item so a long ref can end in an ellipsis instead of
@@ -382,18 +426,49 @@ const PANEL_CSS = `
 .gmg-meta { color: var(--dsw-alias-label-secondary); font-size: 11px; white-space: nowrap; }
 .gmg-notice {
   display: flex; align-items: center; gap: 8px;
+  /* wrap is what lets the error details drop to their own full-width row
+     (flex-basis: 100% on .gmg-err-details); nothing wraps in the one-line
+     notice, so this stays inert there. */
+  flex-wrap: wrap;
   padding: 8px 12px; border-radius: 9px; font-size: 12px;
   border: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-1);
 }
 .gmg-notice.is-error { border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 45%, transparent); color: var(--dsw-alias-state-error-primary); }
+.gmg-notice.is-warn { border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 45%, transparent); color: var(--dsw-alias-state-warn-primary); }
 .gmg-notice.is-ok { color: var(--dsw-alias-state-success-primary); }
-/* Both notice kinds carry a dismiss button: keep them in view while the page
-   scrolls, because an error the user has scrolled past reads as no response. */
-.gmg-notice.is-error, .gmg-notice.is-ok { position: sticky; top: 8px; z-index: 5; }
+/* Every tone keeps its dismiss button stuck while the page scrolls, because
+   a notice the user has scrolled past reads as no response. */
+.gmg-notice.is-error, .gmg-notice.is-warn, .gmg-notice.is-ok { position: sticky; top: 8px; z-index: 5; }
+/* Exit fade for an auto-dismissed notice. No prefers-reduced-motion branch on
+   purpose: the JS removes the node on transitionend, and dropping this
+   transition would leave the notice stuck on screen. */
+.gmg-notice.is-fading { opacity: 0; transition: opacity .18s ease; }
+/* Error readability (round2 E1 lineage): one line still answers what went
+   wrong, and the details row opens the evidence — the argv, the stderr tail —
+   instead of a wall of unparsed mono. */
+.gmg-err-details {
+  flex-basis: 100%;
+  display: flex; flex-direction: column; gap: 4px;
+  font-family: var(--gmg-mono); font-size: 11px; line-height: 1.5;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  padding: 8px 10px;
+  max-height: 160px; overflow: auto;
+}
+.gmg-err-argv { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-secondary); }
+.gmg-err-stderr { white-space: pre-wrap; word-break: break-word; }
+.gmg-err-next { padding: 2px 0 0 22px; }
 .gmg-icon-btn:focus-visible,
 .gmg-file:focus-visible,
 .gmg-branchitem:focus-visible,
+.gmg-moreitem:focus-visible,
+.gmg-morebtn:focus-visible,
+/* GitHub tabs are plain buttons that never carry .gmg-btn, so without this
+   they were the one control family with no keyboard focus ring at all
+   (round2 C2). */
+.gmg-gh-tab:focus-visible,
 .gmg-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
 .gmg-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .gmg-empty { padding: 14px 12px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
@@ -420,8 +495,17 @@ const PANEL_CSS = `
   background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
   font-size: 12px; font-family: inherit; outline: none;
 }
-.gmg-input:focus { border-color: var(--dsw-alias-brand-primary); }
+/* The ring is the textarea's (.gmg-textarea:focus), so the two form controls
+   don't disagree on what "focused" looks like (round2 C3). */
+.gmg-input:focus { border-color: var(--dsw-alias-brand-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-brand-primary) 22%, transparent); }
 .gmg-hint { color: var(--dsw-alias-label-secondary); font-size: 11.5px; line-height: 1.5; }
+/* The amend preview quotes the message being rewritten: one clipped line is
+   the point, and a 4px step keeps it from touching the textarea it previews. */
+.gmg-amend-preview { margin: 0 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The merge-in-progress hint shares the commit foot's row and must be the side
+   that yields: it grows, wraps on a 360px column, and the commit button keeps
+   its place (same slot rule as .gmg-conflict-hint, opposite direction). */
+.gmg-merge-hint { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .gmg-kbd { font-family: var(--gmg-mono); font-size: 10.5px; padding: 0 4px; border-radius: 4px; border: 1px solid var(--dsw-alias-border-l1); color: var(--dsw-alias-label-secondary); }
 .gmg-scroll-cap { max-height: 320px; overflow: auto; }
 
@@ -479,8 +563,14 @@ const PANEL_CSS = `
 .gmg-diff-cell.is-del { color: var(--dsw-alias-state-error-primary); }
 .gmg-diff-cell.is-hunk { grid-column: 1 / -1; color: var(--dsw-alias-brand-primary); padding: 3px 12px; font-size: 11px; }
 .gmg-diff-cell.is-meta { grid-column: 1 / -1; color: var(--dsw-alias-label-secondary); opacity: .7; }
-.gmg-diffbody.is-split { min-width: 0; width: 100%; }
-.gmg-diffbody.is-split .gmg-diffrow.is-splitrow { grid-template-columns: 44px minmax(0, 1fr) 44px minmax(0, 1fr); }
+/* Side-by-side: let the body grow to its widest row so the scroll container
+   offers one whole-body horizontal scrollbar — the same contract the unified
+   view already has (min-width: max-content, line above) — instead of silently
+   clipping every long line (poweruser G13). Each text track floors at its own
+   max-content: a minmax(0, 1fr) track can end up narrower than one line when
+   the two halves divide space equally, which is exactly the clip this fixes. */
+.gmg-diffbody.is-split { min-width: max-content; width: 100%; }
+.gmg-diffbody.is-split .gmg-diffrow.is-splitrow { grid-template-columns: 44px minmax(max-content, 1fr) 44px minmax(max-content, 1fr); }
 .gmg-diffbody.is-split .gmg-diff-cell { overflow: hidden; }
 /* Side-by-side tints each half, not the row: one row can carry a removal on
    the left and an addition on the right, and the gutters belong to that half. */
@@ -559,6 +649,13 @@ const PANEL_CSS = `
 .gmg-statbar-add { height: 100%; background: var(--gmg-ok); }
 .gmg-statbar-del { height: 100%; background: var(--gmg-bad); }
 
+/* Copy-sha + open-on-GitHub, one row over both portalled surfaces. Right
+   aligned so it reads as an action row, not a stat; the compact 22px buttons
+   keep the hover card from growing a whole row taller just for two marks. */
+.gmg-quicklinks { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex: none; }
+.gmg-quicklinks .gmg-icon-btn { width: 22px; height: 22px; }
+.gmg-quicklinks a.gmg-icon-btn { text-decoration: none; }
+
 /* ---- the commit-diff tab: one commit, every file stacked ---- */
 .gmg-cdiff-head {
   display: flex; flex-direction: column; gap: 4px;
@@ -608,6 +705,9 @@ const PANEL_CSS = `
 .gmg-root.is-compact .gmg-kbd-hint { display: none; }
 .gmg-root.is-compact .gmg-textarea { min-height: 52px; font-size: 12.5px; }
 .gmg-root.is-compact .gmg-branchbar { padding: 8px; gap: 6px; }
+/* The aux trigger steps down with the compact bar (24 → 22, the same ladder
+   as .gmg-collapse). */
+.gmg-root.is-compact .gmg-morebtn { width: 22px; height: 22px; }
 .gmg-root.is-compact .gmg-btn { padding: 0 8px; height: 25px; }
 .gmg-root.is-compact .gmg-branch { max-width: 190px; }
 .gmg-root.is-compact .gmg-group-head { padding: 7px 9px; }
@@ -625,7 +725,7 @@ const PANEL_CSS = `
 .gmg-root.is-compact .gmg-diffpath { max-width: 100%; flex: 1; }
 .gmg-root.is-compact .gmg-diffbody { font-size: 11.5px; }
 .gmg-root.is-compact .gmg-diffrow { grid-template-columns: 40px 40px 1fr; }
-.gmg-root.is-compact .gmg-diffbody.is-split .gmg-diffrow.is-splitrow { grid-template-columns: 34px minmax(0, 1fr) 34px minmax(0, 1fr); }
+.gmg-root.is-compact .gmg-diffbody.is-split .gmg-diffrow.is-splitrow { grid-template-columns: 34px minmax(max-content, 1fr) 34px minmax(max-content, 1fr); }
 .gmg-root.is-compact .gmg-diff-no { padding: 0 5px 0 1px; }
 .gmg-root.is-compact .gmg-diff-cell { padding: 0 8px; }
 .gmg-root.is-compact .gmg-cdiff-head { padding: 7px 8px 6px; }

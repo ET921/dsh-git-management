@@ -153,16 +153,23 @@ function DiffPanel(props) {
   const current = siblings.find((entry) => entry.row.path === target.file && entry.staged === target.staged)
   const untracked = current?.row.kind === 'untracked'
   const close = () => (props.onClose ?? closeDiff)()
+  // The header's staging button is symmetric (poweruser G4): a staged file
+  // offers “unstage”, an unstaged one offers “stage”, and each names its own
+  // operation so the in-flight lock lands here, not on the whole panel (G11).
+  const stageAction = target.staged ? 'unstage' : 'stage'
+  const stageOp = fileOp(stageAction, [target.file])
+  const discardOp = fileOp(untracked ? 'deleteUntracked' : 'discard', [target.file])
+  const inflight = (op) => panel.busyOp === op
   const stageHere = () => {
-    gitStore.fileAction('stage', [target.file], null).then(() => {
-      openDiff({ ...target, staged: true })
+    gitStore.fileAction(stageAction, [target.file], null, { op: stageOp }).then(() => {
+      openDiff({ ...target, staged: !target.staged })
     })
   }
   const discardHere = () => {
     const message = untracked ? t('deleteConfirm', { file: target.file }) : t('discardConfirm', { file: target.file })
     if (!window.confirm(message)) return
     const notice = untracked ? t('deleted') : t('discarded')
-    gitStore.fileAction(untracked ? 'deleteUntracked' : 'discard', [target.file], notice).then((ok) => {
+    gitStore.fileAction(untracked ? 'deleteUntracked' : 'discard', [target.file], notice, { op: discardOp }).then((ok) => {
       if (ok) close()
     })
   }
@@ -181,26 +188,24 @@ function DiffPanel(props) {
     h('span', { className: 'gmg-gh-label' }, target.staged ? t('diffStagedBadge') : t('diffWorktreeBadge')),
     h('span', { className: 'gmg-add-count gmg-stats' }, `+${additions}`),
     h('span', { className: 'gmg-del-count gmg-stats' }, `-${deletions}`),
-    target.staged
-      ? null
-      : h(
-          'button',
-          {
-            className: 'gmg-btn',
-            type: 'button',
-            disabled: panel.busy !== null,
-            onClick: stageHere,
-            title: t('stage'),
-          },
-          h(IconPlus, { size: 12 }),
-          t('stage'),
-        ),
+    h(
+      'button',
+      {
+        className: 'gmg-btn',
+        type: 'button',
+        disabled: panel.busy !== null || inflight(stageOp),
+        onClick: stageHere,
+        title: target.staged ? t('unstage') : t('stage'),
+      },
+      target.staged ? h(IconMinus, { size: 12 }) : h(IconPlus, { size: 12 }),
+      target.staged ? t('unstage') : t('stage'),
+    ),
     h(
       'button',
       {
         className: 'gmg-btn is-danger',
         type: 'button',
-        disabled: panel.busy !== null,
+        disabled: panel.busy !== null || inflight(discardOp),
         onClick: discardHere,
         title: untracked ? t('delete') : t('discard'),
       },
@@ -254,7 +259,21 @@ function DiffPanel(props) {
 
   let body
   if (state.loading) body = h('div', { className: 'gmg-empty' }, t('loadingDiff'))
-  else if (state.error !== null) body = h('div', { className: 'gmg-empty' }, state.error)
+  else if (state.error !== null) {
+    // Same shape as the commit tab's failure (design E1): say what broke, then
+    // offer the two moves that exist — read it again, or leave.
+    body = h(
+      'div',
+      { className: 'gmg-cdiff-failure' },
+      h('div', { className: 'gmg-empty' }, state.error),
+      h(
+        'div',
+        { className: 'gmg-form' },
+        h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: () => openDiff({ ...target }) }, t('diffRetry')),
+        h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: () => close() }, t('diffBack')),
+      ),
+    )
+  }
   else if (state.note === 'binary') body = h('div', { className: 'gmg-empty' }, t('binaryDiff'))
   else if (state.note === 'unmerged') body = h('div', { className: 'gmg-empty' }, t('diffUnmerged'))
   else if (state.note === 'empty') body = h('div', { className: 'gmg-empty' }, t('emptyDiff'))
