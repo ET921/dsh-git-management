@@ -238,7 +238,17 @@ function GitPanel(props) {
   }
 
   const history = isRepo
-    ? h(HistoryCard, { path: state.path, log: state.log, branches: state.branches, t, lang, expanded: showAllHistory, onToggle: () => setShowAllHistory((value) => !value) })
+    ? h(HistoryCard, {
+        path: state.path,
+        log: state.log,
+        branches: state.branches,
+        t,
+        lang,
+        expanded: showAllHistory,
+        onToggle: () => setShowAllHistory((value) => !value),
+        scope: state.logScope,
+        onToggleScope: (next) => gitStore.setLogScope(next),
+      })
     : null
 
   const github = isRepo ? h(GithubCard, { status: snapshot, state, t, busy }) : null
@@ -258,25 +268,85 @@ function GitPanel(props) {
 const HISTORY_PREVIEW = 10
 
 /**
- * Read one commit's `%D` decoration.
+ * Which refs a commit row is labelled with.
  *
  * Git hands back the decoration as it prints it — `HEAD -> dev`, `origin/dev`,
  * `tag: v1.0` — so the shape of the string is the kind, except that a plain
  * name is only a local branch if this checkout actually has one by that name.
  * Everything else is a remote.
  *
+ * The rail labels at most three things per commit: the checkout, the checkout's
+ * published copy, and the repository's default branch (`defaultRemote`, read
+ * from `refs/remotes/<remote>/HEAD`). Tags ride along. Every other ref is a
+ * topic branch on someone else's line of work: on a repository with 52 branches
+ * about half the rows of a 40-row window carry one, and a row that starts with
+ * two chips has four characters left for the subject. The branch menu and the
+ * hover card still list every ref pointing at a commit, so nothing is lost —
+ * only the rail is quiet.
+ *
  * @param commit - one log row.
  * @param branches - the `branches` action result, or null before it arrives.
- * @returns `[{ name, kind }]`, `kind` being `head`, `branch`, `remote`, `tag` or `detached`.
+ * @returns `[{ name, kind }]`, `kind` being `head`, `branch`, `remote` or `tag`.
  */
 function historyRefs(commit, branches) {
   const local = new Set((branches?.branches ?? []).map((row) => row.name))
-  return (commit.refs ?? []).map((decoration) => {
-    if (decoration.startsWith('HEAD -> ')) return { name: decoration.slice(8), kind: 'head' }
-    if (decoration === 'HEAD') return { name: 'HEAD', kind: 'detached' }
-    if (decoration.startsWith('tag: ')) return { name: decoration.slice(5), kind: 'tag' }
-    return { name: decoration, kind: local.has(decoration) ? 'branch' : 'remote' }
-  })
+  const current = branches?.current ?? null
+
+  const decorated = []
+  for (const decoration of commit.refs ?? []) {
+    if (decoration.startsWith('HEAD -> ')) {
+      decorated.push({ name: decoration.slice(8), kind: 'head' })
+      continue
+    }
+    if (decoration.startsWith('tag: ')) {
+      decorated.push({ name: decoration.slice(5), kind: 'tag' })
+      continue
+    }
+    // A bare `HEAD` (detached) and the other namespaces — `refs/stash`,
+    // `refs/notes/*`, `refs/bisect/*` — are not branches. Left in, they showed
+    // up as chips labelled with the raw ref path, which is a name a reader
+    // cannot act on.
+    if (decoration === 'HEAD' || decoration.startsWith('refs/')) continue
+    decorated.push({ name: decoration, kind: local.has(decoration) ? 'branch' : 'remote' })
+  }
+
+  // `%D` is decoration order, not meaning order: the checkout first, then tags,
+  // then published copies.
+  const rank = { head: 0, tag: 1, remote: 2, branch: 3, detached: 4 }
+  decorated.sort((a, b) => rank[a.kind] - rank[b.kind])
+
+  const shown = []
+  const base = branches?.defaultRemote ?? null
+  for (const ref of decorated) {
+    if (ref.kind === 'head' || ref.kind === 'tag') {
+      shown.push(ref)
+      continue
+    }
+    // Only two remote refs are worth a chip: the checkout's published copy and
+    // the repository's default branch. Everything else on the rail is a topic
+    // branch belonging to some other line of work — Cursor labels 2 rows out of
+    // 40 for exactly this reason, and the first version of this filter, which
+    // kept every remote, still put a chip on 11 of them.
+    if (ref.kind !== 'remote') continue
+    const short = ref.name.slice(ref.name.indexOf('/') + 1)
+    // `origin/HEAD` is the server's symbolic pointer, not a branch of its own.
+    if (short === 'HEAD') continue
+    if (ref.name === base) {
+      shown.push(ref)
+      continue
+    }
+    // The checkout already names itself; without its published copy the reader
+    // loses "is my branch pushed", and with every sibling remote they lose the
+    // subject line.
+    if (current !== null && short === current) shown.push(ref)
+  }
+
+  // A repository with no remote at all has nothing published to label, so the
+  // local branches are all a row can say. This is a property of the repository,
+  // not of the commit: deciding it per commit made every unpushed branch chip
+  // reappear on the rows that happened to carry no remote ref.
+  if (shown.length === 0 && (branches?.remotes ?? []).length === 0) return decorated.filter((ref) => ref.kind === 'branch')
+  return shown
 }
 
 /**
@@ -326,11 +396,12 @@ function refScope(kind, t) {
  * change set as its own tab in the same column, the way Cursor's history does.
  * Clicking a second commit opens a second tab; the list itself never moves.
  *
- * @param props - `{ path, log, branches, t, lang, expanded, onToggle }`.
+ * @param props - `{ path, log, branches, t, lang, expanded, onToggle, scope, onToggleScope }`.
  * @returns the card.
  */
 function HistoryCard(props) {
-  const { path, log, branches, t, lang, expanded, onToggle } = props
+  const { path, log, branches, t, lang, expanded, onToggle, scope, onToggleScope } = props
+  const showingAll = scope === 'all'
   const visible = useMemo(() => (expanded ? log : log.slice(0, HISTORY_PREVIEW)), [log, expanded])
   const layout = useMemo(() => layoutHistory(visible), [visible])
   const railWidth = useMemo(() => graphRailWidth(layout), [layout])
@@ -350,6 +421,17 @@ function HistoryCard(props) {
       t('history'),
       h('span', { className: 'gmg-count' }, ` ${log.length}`),
       h('span', { className: 'gmg-spacer' }),
+      h(
+        'button',
+        {
+          className: `gmg-btn is-ghost gmg-scope${showingAll ? ' is-all' : ''}`,
+          type: 'button',
+          title: showingAll ? t('scopeHeadHint') : t('scopeAllHint'),
+          'aria-pressed': showingAll,
+          onClick: () => onToggleScope?.(showingAll ? 'head' : 'all'),
+        },
+        showingAll ? t('scopeAll') : t('scopeHead'),
+      ),
       h('button', { className: 'gmg-btn is-ghost', type: 'button', onClick: onToggle }, expanded ? t('showLess') : t('showMore')),
     ),
     h(
@@ -382,7 +464,17 @@ function HistoryCard(props) {
                       }
                     },
                   },
-                  shown.map((ref) => h('span', { key: ref.kind + ref.name, className: `gmg-ref is-${ref.kind}`, title: `${refScope(ref.kind, t)}：${ref.name}` }, refGlyph(ref.kind), ref.name)),
+                  shown.map((ref) =>
+                    h(
+                      'span',
+                      { key: ref.kind + ref.name, className: `gmg-ref is-${ref.kind}`, title: `${refScope(ref.kind, t)}：${ref.name}` },
+                      refGlyph(ref.kind),
+                      // The chip is a flex row, so the name needs its own box:
+                      // `text-overflow` on the flex container does nothing and
+                      // long names were cut mid-glyph with no ellipsis.
+                      h('span', { className: 'gmg-ref-name' }, ref.name),
+                    ),
+                  ),
                   extra > 0 ? h('span', { className: 'gmg-ref-more', title: refs.map((ref) => ref.name).join(', ') }, `+${extra}`) : null,
                   h('span', { className: 'gmg-subject', title: commit.subject }, commit.subject),
                   h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),

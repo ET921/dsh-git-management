@@ -512,21 +512,35 @@ export function createGit(exec) {
   }
 
   /**
-   * Recent commits across every branch, newest first, with the two fields a
-   * graph needs.
+   * Recent commits, newest first, with the two fields a graph needs.
    *
-   * `--all` is what makes the rail show all of the repository's activity, not
-   * just the checked-out line: `--topo-order` keeps children above parents so
-   * lanes never have to bend backwards, `%P` gives the parents whose edges the
-   * rail draws, and `%D` gives the ref names it labels the nodes with.
+   * `--topo-order` keeps children above parents so lanes never have to bend
+   * backwards, `%P` gives the parents whose edges the rail draws, and `%D`
+   * gives the ref names it labels the nodes with.
+   *
+   * The scope decides whether the rail can draw a coherent graph at all:
+   *
+   * - `head` follows the checked-out line, which is what Cursor's graph shows.
+   *   A merge appears as one lane that opens at the merge and closes where the
+   *   branch forked, so the rail reads as "this line, and what joined it".
+   * - `all` reads every ref. On a repository with dozens of live branches this
+   *   interleaves the tips of branches unrelated to the checkout onto the same
+   *   rail; their children are outside the window, so each tip lands on a lane
+   *   that begins at its own row with nothing leading into it.
+   *
+   * `refs/stash` is excluded from the `all` view even though `--all` includes
+   * it: a stash is a tool artifact rather than a line of development, and its
+   * two parents opened two orphan lanes on the first repository this ran on.
    *
    * @param cwd - repository directory.
    * @param limit - how many to read.
+   * @param scope - `'head'` (the default) or `'all'`.
    */
-  async function log(cwd, limit = 30) {
+  async function log(cwd, limit = 30, scope = 'head') {
+    const range = scope === 'all' ? ['--exclude=refs/stash', '--all'] : ['HEAD']
     const result = await exec(
       cwd,
-      ['log', '--all', '--topo-order', `-n${Math.max(1, Math.min(200, limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%P%x1f%D%x1e'],
+      ['log', ...range, '--topo-order', `-n${Math.max(1, Math.min(200, limit))}`, '--date=iso-strict', '--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%P%x1f%D%x1e'],
       { timeoutMs: 20000 },
     )
     if (result.code !== 0) return []
@@ -565,7 +579,7 @@ export function createGit(exec) {
     // shifted every column after it. `%00` is a separator `for-each-ref` does
     // emit (verified) and no ref may contain.
     const result = await exec(cwd, ['for-each-ref', '--format=%(refname:short)%00%(HEAD)%00%(upstream:short)%00%(objectname:short)%00%(committerdate:unix)', 'refs/heads'], { timeoutMs: 20000 })
-    if (result.code !== 0) return { current: null, branches: [] }
+    if (result.code !== 0) return { current: null, defaultRemote: null, remotes: [], branches: [] }
     const rows = String(result.stdout)
       .split(/\r?\n/)
       .filter((line) => line.trim() !== '')
@@ -580,7 +594,30 @@ export function createGit(exec) {
           date: Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000).toISOString() : null,
         }
       })
-    return { current: rows.find((row) => row.current)?.name ?? null, branches: rows }
+    // Which remote branch the repository calls its default. The graph labels
+    // this one ref (plus the checkout and tags) instead of every remote tip;
+    // `%(symref:short)` resolves `refs/remotes/origin/HEAD` to `origin/main`
+    // without a second process. A repository that never had `remote set-head`
+    // run returns nothing, and the rail then labels only the checkout.
+    const head = await exec(cwd, ['for-each-ref', '--format=%(symref:short)', 'refs/remotes/*/HEAD'], { timeoutMs: 20000 })
+    const defaultRemote =
+      head.code === 0
+        ? (String(head.stdout)
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .find((line) => line !== '') ?? null)
+        : null
+    // Nothing to resolve when the repository has no remote: `for-each-ref`
+    // simply matches nothing, and the rail then falls back to local branches.
+    const remotesResult = await exec(cwd, ['remote'], { timeoutMs: 20000 })
+    const remotes =
+      remotesResult.code === 0
+        ? String(remotesResult.stdout)
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line !== '')
+        : []
+    return { current: rows.find((row) => row.current)?.name ?? null, defaultRemote, remotes, branches: rows }
   }
 
   /**

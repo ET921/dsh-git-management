@@ -78,8 +78,8 @@ const LOG = {
   commits: [
     { sha: 'deadbeefdeadbeef', short: 'deadbee', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 3600_000).toISOString(), subject: 'wire the sidebar panel', parents: ['aaaaaaaaaaaaaaaa'], refs: ['HEAD -> main', 'origin/main'] },
     { sha: 'aaaaaaaaaaaaaaaa', short: 'aaaaaaa', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 4000_000).toISOString(), subject: 'merge the sidebar work', parents: ['bbbbbbbbbbbbbbbb', 'cccccccccccccccc'], refs: [] },
-    { sha: 'bbbbbbbbbbbbbbbb', short: 'bbbbbbb', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 5000_000).toISOString(), subject: 'main line change', parents: ['dddddddddddddddd'], refs: [] },
-    { sha: 'cccccccccccccccc', short: 'ccccccc', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 6000_000).toISOString(), subject: 'side branch change', parents: ['dddddddddddddddd'], refs: ['dev'] },
+    { sha: 'bbbbbbbbbbbbbbbb', short: 'bbbbbbb', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 5000_000).toISOString(), subject: 'main line change', parents: ['dddddddddddddddd'], refs: ['origin/release'] },
+    { sha: 'cccccccccccccccc', short: 'ccccccc', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 6000_000).toISOString(), subject: 'side branch change', parents: ['dddddddddddddddd'], refs: ['dev', 'origin/dev'] },
     { sha: 'dddddddddddddddd', short: 'ddddddd', author: 'Ada', email: 'ada@example.com', date: new Date(Date.now() - 7200_000).toISOString(), subject: 'initial import', parents: [], refs: [] },
   ],
 }
@@ -100,6 +100,8 @@ function respond(action, params) {
     case 'branches':
       return {
         current: 'main',
+        defaultRemote: 'origin/dev',
+        remotes: ['origin'],
         branches: [
           { name: 'main', current: true, upstream: 'origin/main', sha: 'abc1234', date: null },
           { name: 'dev', current: false, upstream: null, sha: 'def5678', date: null },
@@ -502,18 +504,21 @@ check('history subject is rendered', text().includes('wire the sidebar panel'), 
   const xs = [...(svg?.querySelectorAll('.gmg-graph-dot') ?? [])].map((dot) => Number(dot.getAttribute('cx')))
   check('the two lanes are at different x', new Set(xs).size === 2, xs)
   check('the rail reserves its width on the rows', /--gmg-graph-w:\s*40px/.test(container.querySelector('.gmg-history')?.getAttribute('style') ?? ''), container.querySelector('.gmg-history')?.getAttribute('style'))
+  const rowFor = (subject) => [...container.querySelectorAll('.gmg-commit-row')].find((row) => row.textContent.includes(subject))
+  const chipsOf = (subject) => [...(rowFor(subject)?.querySelectorAll('.gmg-ref') ?? [])].map((chip) => chip.textContent)
   check('the current branch is labelled on its commit', container.querySelector('.gmg-ref.is-head')?.textContent === 'main', container.querySelector('.gmg-ref.is-head')?.textContent)
-  check('the remote ref is labelled too', container.querySelector('.gmg-ref.is-remote')?.textContent === 'origin/main', container.querySelector('.gmg-ref.is-remote')?.textContent)
-  check('a local branch ref is labelled', [...container.querySelectorAll('.gmg-ref.is-branch')].some((ref) => ref.textContent === 'dev'), [...container.querySelectorAll('.gmg-ref')].map((ref) => ref.className))
+  check('the checkout is labelled with its published copy', chipsOf('wire the sidebar panel').join('|') === 'main|origin/main', chipsOf('wire the sidebar panel'))
+  check('a topic remote that is not the base gets no chip', chipsOf('main line change').length === 0, chipsOf('main line change'))
+  check('a local branch with a published copy is one chip, the remote', chipsOf('side branch change').join('|') === 'origin/dev', chipsOf('side branch change'))
+  check('a local branch that is not the checkout gets no chip', container.querySelector('.gmg-ref.is-branch') === null, [...container.querySelectorAll('.gmg-ref')].map((ref) => ref.className))
 
   // Where a ref lives is shown twice: colour, and a glyph for readers who
   // cannot rely on the hue.
   const headChip = container.querySelector('.gmg-ref.is-head')
   const remoteChip = container.querySelector('.gmg-ref.is-remote')
-  const branchChip = container.querySelector('.gmg-ref.is-branch')
   check('the checked-out ref carries a filled dot', headChip?.querySelector('.gmg-ref-dot') !== null, headChip?.innerHTML)
   check('a remote ref carries the cloud glyph', remoteChip?.querySelector('svg') !== null, remoteChip?.innerHTML)
-  check('a local branch ref carries the branch glyph', branchChip?.querySelector('svg') !== null, branchChip?.innerHTML)
+  check('a ref name is its own box so it can ellipsize', /\.gmg-ref-name\s*\{[^}]*text-overflow:\s*ellipsis/.test([...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')))
   const refCss = [...document.querySelectorAll('style')].map((element) => element.textContent ?? '').join('\n')
   check('local and remote are different hues', /--gmg-remote:\s*#[0-9a-f]{6}/i.test(refCss) && /\.gmg-ref\.is-remote\s*\{[^}]*var\(--gmg-remote\)/.test(refCss), refCss.match(/--gmg-remote[^;]*/)?.[0])
   check('a local branch is the local hue', /--gmg-local:\s*#[0-9a-f]{6}/i.test(refCss) && /\.gmg-ref\.is-branch\s*\{[^}]*var\(--gmg-local\)/.test(refCss), refCss.match(/--gmg-local[^;]*/)?.[0])
