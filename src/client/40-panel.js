@@ -550,18 +550,18 @@ function historyRefs(commit, branches, scope = 'head') {
  *
  * Colour alone would be the only difference between "this branch lives on my
  * disk" and "this branch lives on the server", which a third of readers cannot
- * use. The glyph carries the same fact a second time: a filled dot for the
- * checkout, a branch mark for another local branch, a cloud for a remote, a tag
- * for a release.
+ * use. The glyph carries the same fact a second time: a target for the checkout,
+ * a branch mark for another local branch, a cloud for a remote, a tag for a
+ * release.
  *
  * @param kind - one of `head`, `branch`, `remote`, `tag`, `detached`.
  * @returns the icon element, or null.
  */
 function refGlyph(kind) {
-  if (kind === 'head') return h('span', { className: 'gmg-ref-dot' })
-  if (kind === 'branch') return h(IconBranch, { size: 9 })
+  if (kind === 'head') return h(IconTarget, { size: 10 })
+  if (kind === 'branch') return h(IconBranch, { size: 10 })
   if (kind === 'remote') return h(IconCloud, { size: 10 })
-  if (kind === 'tag') return h(IconTag, { size: 9 })
+  if (kind === 'tag') return h(IconTag, { size: 10 })
   return null
 }
 
@@ -580,27 +580,122 @@ function refScope(kind, t) {
 }
 
 /**
- * The history card: the commit list on the left, the lane rail down its right.
+ * The colour family a ref belongs to, which is also the chip's paint.
  *
- * The rail is one SVG for the whole list rather than one per row, because a lane
- * has to join across row borders; the rows themselves only reserve the width the
- * rail occupies, and every row is pinned to `GRAPH_ROW_HEIGHT` so the two line
- * up. Refs ride on the row instead of the id: a reader needs to know "this is
- * main" far more often than "this is 1268d25", and the id is in the hover card.
+ * A row's `reference.color` (the lane colour the graph assigns) is deliberately
+ * not read here: the badge palette is the panel's semantic one — blue is this
+ * machine, violet is the server, amber is a tag — so a badge keeps its meaning
+ * across themes and stays distinguishable from the rail behind it. Lane colour
+ * belongs to the line, not to the label.
+ *
+ * @param kind - one of `head`, `branch`, `remote`, `tag`, `detached`.
+ * @returns the CSS colour, used both as the group key and the chip's ground.
+ */
+function refFamilyColor(kind) {
+  if (kind === 'remote') return 'var(--gmg-remote)'
+  if (kind === 'tag' || kind === 'detached') return 'var(--gmg-tag)'
+  return 'var(--gmg-local)'
+}
+
+/**
+ * The chips at the right edge of a history row, the way Cursor labels a commit.
+ *
+ * The first ref is the one a reader acts on — the checkout, usually — so it is
+ * the only chip that spends width on a name. Everything after it collapses by
+ * colour into an icon, and a family carrying more than one ref says how many in
+ * front of its glyph. That is what keeps a merge with five refs from pushing the
+ * subject out of the row: five refs become one capsule and at most two glyphs.
+ * The names are still one hover away, in the tooltip.
+ *
+ * @param references - the row's refs, in display order.
+ * @param t - translator.
+ * @returns the chips, ready to spread into the row.
+ */
+function refBadges(references, t) {
+  if (references.length === 0) return []
+  const [lead, ...rest] = references
+  const badges = [
+    h(
+      'span',
+      { key: 'lead', className: `gmg-ref is-${lead.kind}`, title: `${refScope(lead.kind, t)}：${lead.name}` },
+      refGlyph(lead.kind),
+      // The chip is a flex row, so the name needs its own box: `text-overflow`
+      // on the flex container does nothing and long names were cut mid-glyph.
+      h('span', { className: 'gmg-ref-name' }, lead.name),
+    ),
+  ]
+
+  // Grouped in first-seen order so the chips follow the refs' own ranking
+  // (checkout, tags, published copies) instead of the hash order of a Set.
+  const families = new Map()
+  for (const ref of rest) {
+    const color = refFamilyColor(ref.kind)
+    const family = families.get(color)
+    if (family === undefined) families.set(color, { color, refs: [ref] })
+    else family.refs.push(ref)
+  }
+
+  let index = 0
+  for (const family of families.values()) {
+    index += 1
+    const first = family.refs[0]
+    badges.push(
+      h(
+        'span',
+        {
+          key: `family-${index}`,
+          className: `gmg-ref is-cluster is-${first.kind}`,
+          title: family.refs.map((ref) => `${refScope(ref.kind, t)}：${ref.name}`).join('\n'),
+        },
+        family.refs.length > 1 ? h('span', { className: 'gmg-ref-count' }, String(family.refs.length)) : null,
+        refGlyph(first.kind),
+      ),
+    )
+  }
+  return badges
+}
+
+/**
+ * The history card: one row per commit, each row carrying its own slice of the
+ * graph at the left edge and its refs at the right.
+ *
+ * The rail used to be a single SVG behind the whole list, which forced every row
+ * to reserve its width and pinned the rows to a taller grid. Drawing one slice
+ * per row lets the row be 22px and puts the graph in the text's own flow, the
+ * way Cursor's history reads: line, subject, labels.
+ *
+ * Refs ride on the row instead of the id: a reader needs to know "this is main"
+ * far more often than "this is 1268d25", and the id is in the hover card. The
+ * first ref is named, the rest collapse into colour families (see `refBadges`),
+ * and the author and time moved out of the row into that same hover card.
  *
  * Every row is also the way into that commit: clicking it opens the commit's
  * change set as its own tab in the same column, the way Cursor's history does.
  * Clicking a second commit opens a second tab; the list itself never moves.
  *
- * @param props - `{ path, log, branches, t, lang, busy, expanded, onToggle, scope, onToggleScope }`.
+ * @param props - `{ path, log, branches, t, busy, expanded, onToggle, scope, onToggleScope }`.
  * @returns the card.
  */
 function HistoryCard(props) {
-  const { path, log, branches, t, lang, busy, expanded, onToggle, scope, onToggleScope } = props
+  const { path, log, branches, t, busy, expanded, onToggle, scope, onToggleScope } = props
   const showingAll = scope === 'all'
   const visible = useMemo(() => (expanded ? log : log.slice(0, HISTORY_PREVIEW)), [log, expanded])
-  const layout = useMemo(() => layoutHistory(visible), [visible])
-  const railWidth = useMemo(() => graphRailWidth(layout), [layout])
+  // Each commit arrives with the refs its row will label; the layout reads them
+  // so a ref's lane and its badge are decided from one list, and the checkout is
+  // flagged once here instead of being re-detected per row.
+  const annotated = useMemo(
+    () =>
+      visible.map((commit) => {
+        const references = historyRefs(commit, branches, scope)
+        return { ...commit, references }
+      }),
+    [visible, branches, scope],
+  )
+  const currentSha = useMemo(
+    () => annotated.find((commit) => commit.references.some((ref) => ref.kind === 'head'))?.sha ?? null,
+    [annotated],
+  )
+  const layout = useMemo(() => layoutHistory(annotated, { currentSha }), [annotated, currentSha])
   const hasRemote = (branches?.remotes ?? []).length > 0
 
   const openCommit = (commit) => {
@@ -647,52 +742,39 @@ function HistoryCard(props) {
     ),
     h(
       'div',
-      { className: 'gmg-history', style: { '--gmg-graph-w': `${railWidth}px` } },
+      { className: 'gmg-history' },
       log.length === 0
         ? h('div', { className: 'gmg-empty' }, t('noCommits'))
-        : [
-            h(HistoryGraph, { key: 'rail', rows: layout }),
-            layout.map((row) => {
-              const commit = row.commit
-              const refs = historyRefs(commit, branches, scope)
-              const shown = refs.slice(0, 2)
-              const extra = refs.length - shown.length
-              const open = () => openCommit(commit)
-              return h(
-                HoverTarget,
-                { key: commit.sha, card: h(CommitHoverCard, { commit, t }) },
-                h(
-                  'div',
-                  {
-                    className: 'gmg-commit-row',
-                    role: 'button',
-                    tabIndex: 0,
-                    onClick: open,
-                    onKeyDown: (event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault()
-                        open()
-                      }
-                    },
+        : layout.map((row) => {
+            const commit = row.commit
+            // The layout hands back the refs it was given; the local read keeps
+            // a row labelled even if a layout ever drops them.
+            const references = row.references ?? historyRefs(commit, branches, scope)
+            const open = () => openCommit(commit)
+            return h(
+              HoverTarget,
+              { key: commit.sha, card: h(CommitHoverCard, { commit, t }) },
+              h(
+                'div',
+                {
+                  className: `gmg-commit-row${row.isCurrent ? ' is-current' : ''}`,
+                  role: 'button',
+                  tabIndex: 0,
+                  onClick: open,
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      open()
+                    }
                   },
-                  shown.map((ref) =>
-                    h(
-                      'span',
-                      { key: ref.kind + ref.name, className: `gmg-ref is-${ref.kind}`, title: `${refScope(ref.kind, t)}：${ref.name}` },
-                      refGlyph(ref.kind),
-                      // The chip is a flex row, so the name needs its own box:
-                      // `text-overflow` on the flex container does nothing and
-                      // long names were cut mid-glyph with no ellipsis.
-                      h('span', { className: 'gmg-ref-name' }, ref.name),
-                    ),
-                  ),
-                  extra > 0 ? h('span', { className: 'gmg-ref-more', title: refs.map((ref) => ref.name).join(', ') }, `+${extra}`) : null,
-                  h('span', { className: 'gmg-subject', title: commit.subject }, commit.subject),
-                  h('span', { className: 'gmg-meta' }, `${commit.author} · ${relativeTime(commit.date, lang)}`),
-                ),
-              )
-            }),
-          ],
+                },
+                h(HistoryGraph, { row }),
+                h('span', { className: 'gmg-subject', title: commit.subject }, commit.subject),
+                h('span', { className: 'gmg-spacer' }),
+                ...refBadges(references, t),
+              ),
+            )
+          }),
     ),
   )
 }

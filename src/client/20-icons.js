@@ -58,6 +58,19 @@ const IconCheck = makeIcon([h('path', { key: 'a', d: 'M3.2 8.4 6.4 11.6 12.8 4.6
 /** A commit node, used by the history rows. */
 const IconCommit = makeIcon([h('circle', { key: 'a', cx: 8, cy: 8, r: 2.6 }), h('path', { key: 'b', d: 'M1.8 8h3M11.2 8h3' })])
 
+/**
+ * The checkout marker on a history row: a target.
+ *
+ * The row already has a dot for the commit itself, so the badge needs a mark
+ * that says "this one is where you are" without repeating it — two rings and a
+ * centre, read as an aim point rather than as another node.
+ */
+const IconTarget = makeIcon([
+  h('circle', { key: 'a', cx: 8, cy: 8, r: 5.6 }),
+  h('circle', { key: 'b', cx: 8, cy: 8, r: 2.6 }),
+  h('circle', { key: 'c', cx: 8, cy: 8, r: 0.9, fill: 'currentColor', stroke: 'none' }),
+])
+
 /** Add to the index. */
 const IconPlus = makeIcon([h('path', { key: 'a', d: 'M8 3.2v9.6M3.2 8h9.6' })])
 
