@@ -33,6 +33,17 @@ const WORKTREE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 const GITHUB_HOSTS = new Set(['github.com', 'www.github.com'])
 
 /**
+ * The name the GitHub token is stored under, in the credentials service and in
+ * the environment alike. A CredentialRef is an environment-variable name: the
+ * service layers a provider-managed store over the same name `git` and every
+ * other tool already reads, so one secret answers both without a rename.
+ */
+const GITHUB_TOKEN_REF = 'GITHUB_TOKEN'
+
+/** Environment-variable names a GitHub token may also live in, most specific first. */
+const GITHUB_TOKEN_ENV = ['GITHUB_TOKEN', 'GH_TOKEN']
+
+/**
  * The host, port and transport named by a git remote URL.
  *
  * A remote URL is repository content, not configuration: a token is a bearer
@@ -169,17 +180,6 @@ async function github(token, path, init = {}, target) {
   return body
 }
 
-/**
- * Pick the GitHub token: the request's own, else the host environment's.
- * @param supplied - token from the client (per-request).
- * @returns the token, or null when this host has none.
- */
-function resolveToken(supplied) {
-  if (typeof supplied === 'string' && supplied.trim() !== '') return supplied.trim()
-  const ambient = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN
-  return typeof ambient === 'string' && ambient.trim() !== '' ? ambient.trim() : null
-}
-
 /** GitHub logins already resolved from an author email, keyed by lower-case address. */
 const emailLogins = new Map()
 
@@ -224,11 +224,13 @@ async function loginForEmail(token, email, own, target) {
 /**
  * Build the action table.
  *
- * @param options - `{ git, workspaces }`, where `workspaces()` returns
- *   `[{ id, title, path }]` and `git` is `createGit(exec)`.
+ * @param options - `{ git, workspaces, credentials }`, where `workspaces()`
+ *   returns `[{ id, title, path }]`, `git` is `createGit(exec)`, and
+ *   `credentials()` lazily returns the host credentials service (or
+ *   undefined when the host has none).
  * @returns `{ handle(action, params) }`.
  */
-export function createActions({ git, workspaces }) {
+export function createActions({ git, workspaces, credentials = () => undefined }) {
   /**
    * The panel's repo picker: every workspace, annotated with whether it is a
    * repository and which branch it is on.
@@ -549,6 +551,28 @@ export function createActions({ git, workspaces }) {
         return git.init(path)
       case 'github':
         return githubAction(path, params)
+      case 'saveToken': {
+        const token = typeof params.token === 'string' ? params.token.trim() : ''
+        if (token === '') throw argumentError('token is required')
+        if (token.length > 1000) throw argumentError('token is too long')
+        const store = credentials()
+        if (store === undefined || store === null || typeof store.set !== 'function') {
+          const error = new Error('credential storage is unavailable on this host')
+          error.status = 501
+          error.code = 'credential-unavailable'
+          throw error
+        }
+        await store.set(GITHUB_TOKEN_REF, token)
+        return { saved: true }
+      }
+      case 'clearToken': {
+        const store = credentials()
+        if (store !== undefined && store !== null && typeof store.unset === 'function') {
+          await store.unset(GITHUB_TOKEN_REF)
+          return { cleared: true }
+        }
+        return { cleared: false }
+      }
       default: {
         const error = new Error(`unknown action: ${action}`)
         error.status = 404
@@ -648,6 +672,40 @@ export function createActions({ git, workspaces }) {
   }
 
   /**
+   * Pick the GitHub token: the request's own, else the credentials service,
+   * else the host environment's.
+   *
+   * A CredentialRef is an environment-variable name, so the service layers its
+   * provider-managed store over the same name `git` already reads; storing
+   * under `GITHUB_TOKEN` answers both without a rename. The service is asked
+   * per operation and never cached: that per-operation read is what lets a
+   * changed credential reach the very next request without a restart.
+   *
+   * @param supplied - token from the client (per-request).
+   * @returns the token, or null when this host has none.
+   */
+  async function resolveToken(supplied) {
+    if (typeof supplied === 'string' && supplied.trim() !== '') return supplied.trim()
+    const store = credentials()
+    if (store !== undefined && store !== null && typeof store.resolve === 'function') {
+      for (const ref of GITHUB_TOKEN_ENV) {
+        try {
+          const resolved = await store.resolve(ref)
+          const value = resolved?.value
+          if (typeof value === 'string' && value.trim() !== '') return value.trim()
+        } catch {
+          // A failing provider must not hide the environment fallback below.
+        }
+      }
+    }
+    for (const ref of GITHUB_TOKEN_ENV) {
+      const ambient = process.env[ref]
+      if (typeof ambient === 'string' && ambient.trim() !== '') return ambient.trim()
+    }
+    return null
+  }
+
+  /**
    * The GitHub surface: repo facts, open pulls, open issues, and PR creation.
    * @param path - repository directory.
    * @param params - `{ action, token, title, body, base, head, draft }`.
@@ -667,7 +725,7 @@ export function createActions({ git, workspaces }) {
     if (target === null) {
       return { connected: true, remote, authorized: false, reason: 'unsupported-host' }
     }
-    const token = resolveToken(params.token)
+    const token = await resolveToken(params.token)
     if (token === null) return { connected: true, remote, authorized: false, reason: 'no-token' }
 
     if (request === 'repo') {

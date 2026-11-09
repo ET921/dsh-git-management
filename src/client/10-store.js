@@ -665,14 +665,43 @@ function createGitStore() {
   }
 
   /**
-   * Remember or clear the GitHub token for this page load (never persisted),
-   * then re-read the GitHub card.
-   * @param token - the token, or null to forget it.
+   * Persist the GitHub token in the host's credential store, then re-read the
+   * GitHub card so the newly authorised surface replaces the form.
+   *
+   * The token does not stay in the browser: the host writes it to the DSH
+   * credential store (the same protected store as the model API keys) and every
+   * later `github` action resolves it there. Saving nothing is a forget, which
+   * is what the empty field means.
+   *
+   * @param token - the token to store; blank forgets the stored one.
+   * @param savedMessage - the notice to raise on success, already translated.
+   * @param forgottenMessage - the notice to raise when a blank save forgets it.
+   * @returns true when the host accepted the write, false when it failed.
    */
-  async function saveToken(token) {
-    rememberToken(token === null || token.trim() === '' ? null : token.trim())
+  async function saveToken(token, savedMessage = 'GitHub token saved', forgottenMessage = 'GitHub token forgotten') {
+    const value = String(token ?? '').trim()
+    if (value === '') return clearToken(forgottenMessage)
+    const done = await task('token', () => callHost('saveToken', { token: value }))
+    if (done === undefined) return false
+    setNotice(savedMessage)
     set({ editingToken: false, github: null })
     if (state.path !== null) await loadGithub('repo')
+    return true
+  }
+
+  /**
+   * Forget the stored GitHub token — the host deletes it from the credential
+   * store — then re-read the card, which falls back to its unauthorised face.
+   * @param forgottenMessage - the notice to raise on success, already translated.
+   * @returns true when the host cleared the credential, false when it failed.
+   */
+  async function clearToken(forgottenMessage = 'GitHub token forgotten') {
+    const done = await task('token', () => callHost('clearToken', {}))
+    if (done === undefined) return false
+    setNotice(forgottenMessage)
+    set({ editingToken: false, github: null })
+    if (state.path !== null) await loadGithub('repo')
+    return true
   }
 
   return {
@@ -705,6 +734,7 @@ function createGitStore() {
     loadStashCount,
     createPull,
     saveToken,
+    clearToken,
     setMessage: (message) => set({ message }),
     setWorktreeDraft: (value) => set({ worktreeDraft: value }),
     setFlag: (flag, value) => set({ [flag]: value }),

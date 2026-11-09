@@ -132,7 +132,7 @@ sequenceDiagram
 
 - 自动认出 origin（ssh / https、GitHub Enterprise 也行）。
 - 看星标／复刻／issue 数、PR 清单、Issue 清单，从当前分支一键开 PR。
-- GitHub token 只放在本次分页载入的内存里，不写进浏览器存储——重新载入页面要重填；推送走你本机的 git 凭证。
+- GitHub token 储存在本机的 DSH 凭证存放区（0600、与模型 API key 同一个 store），重新载入或重启都不必重填；面板上有「忘记 token」可随时清除。推送仍走你本机 git 的凭证。
 
 ### 其他小东西
 
@@ -279,7 +279,7 @@ npm run build        # src/ → lib/（lib 是入库的产物）
 - `/dsh-git/api` 只吃 `content-type: application/json`（强制 preflight），加同源检查；有 `connection` 服务时再请它拒绝一次。
 - 请求的 `path` 必须在已注册 workspace 内（或子目录），否则 403。
 - 文件一律用 `:(literal)` pathspec；`commitDiff` 只接受 4–64 位 hex sha，并加 `--no-ext-diff`。
-- GitHub token 只放本次分页载入的内存，不落盘（不存 localStorage；旧版残留会在载入时自动清掉），且只附加在 `github` 动作上；推送走本机 git 凭据。
+- GitHub token 由 Host 写入本机 DSH 凭证存放区（0600、与模型 API key 同一个 store），client 不保存也不随请求传送——`github` 动作由 Host 自己解析；旧版写在 localStorage 的残留会在载入时自动清掉；推送走本机 git 凭据。
 
 ### 已知边界
 

@@ -1,238 +1,313 @@
 /**
- * The history rail: which lane each commit sits in, and the SVG that draws them.
+ * The commit graph, drawn the way Cursor draws it.
  *
- * The panel had a flat list of recent commits. A list answers "what happened on
- * my branch"; it cannot answer "is this branch merged", "where did the fix land
- * relative to main", or "which of these is a merge". Those are lane questions,
- * and the rail draws them the way Cursor's graph and gitk do: one column per
- * open line of history, a node per commit, an edge per parent.
+ * Cursor ships the VS Code 1.128 Source Control graph, and this file recreates
+ * its swimlane layout and its per-row SVG instead of the older "one rail behind
+ * the whole list" drawing. Two things changed together:
  *
- * Layout is the standard swim-lane walk over `--topo-order` output: each lane
- * waits for the commit it will draw next, a commit sits in the lane waiting for
- * it (or takes a free one when none does), its first parent inherits that lane,
- * and a merge's other parents open new ones. Because the host reads the log
- * with `--topo-order`, children are always above parents, so lanes only ever
- * run straight down — no edge has to bend back up.
+ *  - The graph moved to the left of each history row, and every row is now its
+ *    own 22px-tall `<svg>`. A lane is a column of cells stacked by the list,
+ *    not one tall picture the rows overlay, so a row's width is whatever its
+ *    widest lane needs and no two rows have to agree on it.
+ *  - Lanes turn the way VS Code turns them: a straight column where a line
+ *    passes through, a quarter-arc where two lanes converge on a commit, a
+ *    rounded elbow where a lane shifts sideways past a merge, and hollow/solid
+ *    nodes that read "this is the checkout" and "this is a merge" without
+ *    needing the ref chip to say so.
+ *
+ * The layout is the VS Code `gitGraph` swimlane walk over `--topo-order` output
+ * (children always above parents): each row clones the previous row's output as
+ * its input, replaces the lane waiting for the commit with its first parent,
+ * drops any further lane waiting for the same commit, and appends a fresh lane
+ * for every other parent.
  */
 
-/** Horizontal distance between two lanes, in px (the widest it will get). */
-const GRAPH_LANE_WIDTH = 13
+/** Height of one history row, in px. VS Code pins the SCM graph to 22. */
+const GRAPH_ROW_HEIGHT = 22
 
-/** Height of one history row, in px. The rail is only continuous when every row matches. */
-const GRAPH_ROW_HEIGHT = 26
+/** Width of one lane, in px. */
+const GRAPH_LANE_WIDTH = 11
 
-/** Padding at the left and right ends of the rail, in px. */
-const GRAPH_PAD = 7
+/** Radius of the rounded elbow a shifting lane turns through, in px. */
+const GRAPH_ELBOW_RADIUS = 5
 
-/** Width the rail may grow to before lanes start sharing space, in px. */
-const GRAPH_WIDTH_BUDGET = 104
+/** Radius of a plain commit node, in px, as VS Code sizes it. */
+const GRAPH_NODE_RADIUS = 4
+
+/** Border width around a node, in px. */
+const GRAPH_NODE_STROKE = 2
 
 /**
- * Lane colours: a saturated set, because the theme's accents are calmer than a
- * commit graph can afford — three lanes and a merge have to be told apart at a
- * glance. Fixed hues rather than tokens, so a lane keeps its colour across
- * themes and a reader learns "green is that branch".
+ * Lane colours, in VS Code's `scmGraph.foreground1..5` order. The order is
+ * part of the contract — the first lane always opens with the first colour —
+ * so a lane keeps its identity and a reader learns "this colour is that line".
+ * Five colours serve any number of lanes by cycling.
  */
-const GRAPH_COLORS = [
-  '#3b82f6',
-  '#22c55e',
-  '#f59e0b',
-  '#ef4444',
-  '#a855f7',
-  '#06b6d4',
-  '#ec4899',
-  '#84cc16',
-]
+const LANE_COLORS = ['#FFB000', '#DC267F', '#994F00', '#40B0A6', '#B66DFF']
 
 /**
- * The colour of one lane.
- * @param lane - the lane index.
- * @returns a CSS colour.
+ * Ref colours: the checkout is blue, a published copy purple, a tag orange —
+ * VS Code's dark-theme `charts.blue` / `charts.purple` / `base`. Kept apart
+ * from the five lane colours so a label never masquerades as a lane.
  */
-function graphColor(lane) {
-  return GRAPH_COLORS[((lane % GRAPH_COLORS.length) + GRAPH_COLORS.length) % GRAPH_COLORS.length]
+const REF_COLORS = { head: '#3794FF', remote: '#B180D7', tag: '#EA5C00' }
+
+/**
+ * Cursor's badge order for the refs a row carries: the checkout first, then
+ * published copies, then local branches and tags together, then anything else.
+ * The panel relies on this order to choose the name its badge shows.
+ */
+const REF_RANK = { head: 0, remote: 1, branch: 2, tag: 2, detached: 3 }
+
+/** The x centre of a lane, in px: lane 0 sits one lane-width in from the left. */
+function laneX(lane) {
+  return GRAPH_LANE_WIDTH * (lane + 1)
 }
 
 /**
- * Assign every commit a lane and record the lanes it draws into.
- *
- * @param commits - newest first, each `{ sha, parents }`.
- * @returns `[{ commit, lane, incoming, before, after, parentLanes }]`, one per commit.
+ * Advance the lane-colour cursor and hand back the next palette index.
+ * @param cursor - the current cursor, -1 before the first lane is opened.
+ * @returns the next index into `LANE_COLORS`.
  */
-function layoutHistory(commits) {
-  /** Lane index → the sha that lane is waiting for, or null when the lane is free. */
-  const lanes = []
+function nextPalette(cursor) {
+  return (cursor + 1) % LANE_COLORS.length
+}
+
+/**
+ * Cursor's ref order, as a sort comparator. Unknown kinds trail the known ones,
+ * and equal ranks keep their input order (the sort is stable).
+ * @param a - one ref, carrying a `kind`.
+ * @param b - another.
+ * @returns negative when `a` sorts first.
+ */
+function compareRefs(a, b) {
+  const rank = (ref) => REF_RANK[ref.kind] ?? 4
+  return rank(a) - rank(b)
+}
+
+/**
+ * Assign every commit a lane and record the lanes entering and leaving its row.
+ *
+ * @param commits - newest first, each `{ sha, parents, references }`.
+ *   `references` is `[{ kind, name }]` pre-computed by the panel, `kind` being
+ *   `head`, `remote`, `tag`, `branch` or `detached`.
+ * @param options - `{ currentSha, refColor }`. `refColor(ref)` overrides the
+ *   default kind→`REF_COLORS` lookup.
+ * @returns one row per commit: `{ commit, isCurrent, inputSwimlanes,
+ *   outputSwimlanes, color, references, width, height }`.
+ */
+function layoutHistory(commits, options = {}) {
+  const currentSha = options.currentSha ?? null
+  const refColor = typeof options.refColor === 'function'
+    ? options.refColor
+    : ((ref) => REF_COLORS[ref.kind] ?? null)
+
+  // Parent lookup, so a merge can hand its second parent the colour that
+  // parent's own refs claim instead of always minting a fresh lane colour.
+  const commitBySha = new Map()
+  for (const commit of commits) commitBySha.set(commit.sha, commit)
+
+  // The colour a commit's refs claim, if any: the first ref whose kind has a
+  // colour. A plain branch or a detached checkout has none, so its line falls
+  // through to the lane colour.
+  const refColorOf = (commit) => {
+    for (const ref of commit?.references ?? []) {
+      const color = refColor(ref)
+      if (color) return color
+    }
+    return null
+  }
+
   const rows = []
-
-  /**
-   * The leftmost lane to the right of `lane` that is free, extending the rail
-   * when there is none. A new branch never opens to the left of the line it
-   * forked from: that would draw the branch as older than the line it starts at.
-   * @param lane - the lane the commit is on.
-   * @returns the index.
-   */
-  const freeLaneRight = (lane) => {
-    for (let index = lane + 1; index < lanes.length; index += 1) {
-      if (lanes[index] === null) return index
-    }
-    lanes.push(null)
-    return lanes.length - 1
-  }
-
-  /** The leftmost free lane anywhere, used for a commit no lane was waiting for. */
-  const freeLane = () => {
-    for (let index = 0; index < lanes.length; index += 1) {
-      if (lanes[index] === null) return index
-    }
-    lanes.push(null)
-    return lanes.length - 1
-  }
+  let paletteCursor = -1
+  let previous = []
 
   for (const commit of commits) {
-    const parents = Array.isArray(commit.parents) ? commit.parents.filter((parent) => typeof parent === 'string' && parent !== '') : []
+    const parents = Array.isArray(commit.parents)
+      ? commit.parents.filter((parent) => typeof parent === 'string' && parent !== '')
+      : []
 
-    // Every lane waiting for this commit, leftmost first. A merge makes two
-    // lanes wait for the same commit; the commit is drawn once, on the leftmost,
-    // and the others join it from above (see `joins`).
-    const waiting = []
-    for (let index = 0; index < lanes.length; index += 1) {
-      if (lanes[index] === commit.sha) waiting.push(index)
-    }
-    const incoming = waiting.length > 0
-    const lane = incoming ? waiting[0] : freeLane()
-    const joins = waiting.slice(1)
+    // Each row clones the previous row's output rather than sharing it: the
+    // lanes mutate as the walk passes down, and a shared object would let one
+    // row rewrite a lane the row above still draws.
+    const input = previous.map((lane) => ({ id: lane.id, color: lane.color }))
+    const output = []
 
-    lanes[lane] = commit.sha
-    const before = lanes.slice()
-    // The duplicates are consumed by this row: their lines meet this commit.
-    for (const other of joins) lanes[other] = null
+    // The leftmost lane waiting for this commit; a new lane to the right of
+    // every existing one when no lane was waiting.
+    const l = input.findIndex((lane) => lane.id === commit.sha)
+    const laneIndex = l === -1 ? input.length : l
 
-    const parentLanes = []
-    parents.forEach((parent, index) => {
-      const existing = lanes.indexOf(parent)
-      if (index === 0) {
-        // The first parent keeps this line only when no line to its LEFT is
-        // already headed for it. If one is, the main line is the left one and
-        // this lane closes into it — otherwise the two lines would swap places
-        // and every merge would look like the history changed column.
-        if (existing !== -1 && existing < lane) {
-          lanes[lane] = null
-          parentLanes.push(existing)
-          return
+    for (let index = 0; index < input.length; index += 1) {
+      const lane = input[index]
+      if (lane.id === commit.sha) {
+        if (index === l) {
+          // The commit sits on this lane. It hands the lane to its first parent
+          // (or lets the lane end here when the commit is a root).
+          if (parents.length > 0) {
+            output.push({ id: parents[0], color: refColorOf(commit) ?? lane.color })
+          }
         }
-        lanes[lane] = parent
-        parentLanes.push(lane)
-        // A lane to the right that already heads for the same parent is left
-        // alone: the two lines meet when that parent is drawn.
-        return
+        // A further lane waiting for the same commit is a merge that converges
+        // here; it is consumed, not passed on.
+      } else {
+        output.push(lane)
       }
-      if (existing !== -1) {
-        parentLanes.push(existing)
-        return
+    }
+
+    // Every other parent forks a new lane. The first parent is already placed
+    // above when the commit matched a lane; otherwise it is the first new lane.
+    const start = l === -1 ? 0 : 1
+    for (let i = start; i < parents.length; i += 1) {
+      let color = i === 0 ? refColorOf(commit) : refColorOf(commitBySha.get(parents[i]))
+      if (!color) {
+        paletteCursor = nextPalette(paletteCursor)
+        color = LANE_COLORS[paletteCursor]
       }
-      const fresh = freeLaneRight(lane)
-      lanes[fresh] = parent
-      parentLanes.push(fresh)
+      output.push({ id: parents[i], color })
+    }
+
+    // The node's colour is the lane it continues into; a root keeps the lane
+    // that was waiting for it, and a lane-less root falls back to the checkout
+    // blue rather than going colourless.
+    const nodeColor = laneIndex < output.length
+      ? output[laneIndex].color
+      : laneIndex < input.length
+        ? input[laneIndex].color
+        : REF_COLORS.head
+
+    const references = (commit.references ?? [])
+      .map((ref) => ({ ...ref, color: refColor(ref) ?? nodeColor }))
+      .sort(compareRefs)
+
+    const lanes = Math.max(input.length, output.length, 1)
+    const width = GRAPH_LANE_WIDTH * (lanes + 1)
+
+    rows.push({
+      commit,
+      isCurrent: commit.sha === currentSha,
+      inputSwimlanes: input,
+      outputSwimlanes: output,
+      color: nodeColor,
+      references,
+      width,
+      height: GRAPH_ROW_HEIGHT,
     })
 
-    if (parents.length === 0) lanes[lane] = null
-    while (lanes.length > 0 && lanes[lanes.length - 1] === null) lanes.pop()
-    rows.push({ commit, lane, incoming, joins, before, after: lanes.slice(), parentLanes })
+    previous = output
   }
+
   return rows
 }
 
 /**
- * How wide the rail needs to be for these rows.
- * @param rows - the layout.
- * @returns a width in px, 0 when there is nothing to draw.
+ * How wide one laid-out row needs to be, in px.
+ * @param row - one row from `layoutHistory`.
+ * @returns the row's width, 0 when there is nothing to draw.
  */
-function graphRailWidth(rows) {
-  if (rows.length === 0) return 0
-  let lanes = 0
-  for (const row of rows) {
-    lanes = Math.max(lanes, row.lane + 1, row.before.length, row.after.length)
-  }
-  if (lanes === 0) return 0
-  return GRAPH_PAD * 2 + lanes * Math.max(6, Math.min(GRAPH_LANE_WIDTH, GRAPH_WIDTH_BUDGET / lanes))
+function graphRowWidth(row) {
+  return row?.width ?? 0
 }
 
 /**
- * The rail itself: one SVG behind the rows, so the lanes join across row borders.
+ * One history row's graph: its own SVG cell, lanes entering at the top and
+ * leaving at the bottom so the list stacks them into continuous columns.
  *
- * @param props - `{ rows }`, the output of `layoutHistory`.
+ * @param props - `{ row, height }`, the row from `layoutHistory`.
  * @returns the SVG.
  */
 function HistoryGraph(props) {
-  const rows = props.rows ?? []
-  if (rows.length === 0) return null
-  let lanes = 0
-  for (const row of rows) {
-    lanes = Math.max(lanes, row.lane + 1, row.before.length, row.after.length)
-  }
-  const laneWidth = Math.max(6, Math.min(GRAPH_LANE_WIDTH, GRAPH_WIDTH_BUDGET / lanes))
-  const width = GRAPH_PAD * 2 + lanes * laneWidth
-  const height = rows.length * GRAPH_ROW_HEIGHT
-  const x = (lane) => GRAPH_PAD + lane * laneWidth + laneWidth / 2
-  const edges = []
-  const dots = []
+  const row = props?.row
+  if (!row) return null
+  const height = props.height ?? GRAPH_ROW_HEIGHT
+  const cy = height / 2
+  const commit = row.commit ?? {}
+  const parents = Array.isArray(commit.parents)
+    ? commit.parents.filter((parent) => typeof parent === 'string' && parent !== '')
+    : []
+  const input = row.inputSwimlanes ?? []
+  const output = row.outputSwimlanes ?? []
 
-  rows.forEach((row, index) => {
-    const top = index * GRAPH_ROW_HEIGHT
-    const cy = top + GRAPH_ROW_HEIGHT / 2
-    const bottom = top + GRAPH_ROW_HEIGHT
-    const lanesHere = Math.max(row.before.length, row.after.length)
-    const joins = row.joins ?? []
-    // Lanes that are only passing through this row keep their line straight.
-    for (let lane = 0; lane < lanesHere; lane += 1) {
-      if (lane === row.lane) continue
-      const fromAbove = (row.before[lane] ?? null) !== null
-      const toBelow = (row.after[lane] ?? null) !== null
-      if (joins.includes(lane)) {
-        // Another line was waiting for this same commit. It meets the dot from
-        // above instead of ending in mid-air, which is what makes a merge read
-        // as "these two lines became one" rather than as a lost branch.
-        const bend = GRAPH_ROW_HEIGHT * 0.2
-        edges.push({
-          lane,
-          d: `M ${x(lane)} ${top} C ${x(lane)} ${top + bend}, ${x(row.lane)} ${cy - bend}, ${x(row.lane)} ${cy}`,
-        })
-        continue
+  // The lane the node sits on, resolved the same way the layout did: the lane
+  // waiting for the commit, or a fresh lane to the right when none was.
+  const l = input.findIndex((lane) => lane.id === commit.sha)
+  const laneIndex = l === -1 ? input.length : l
+
+  let key = 0
+  const path = (d, color) =>
+    h('path', { key: `e${key += 1}`, className: 'gmg-graph-edge', d, stroke: color, fill: 'none', strokeWidth: 1, strokeLinecap: 'round' })
+  const circle = (lane, r, strokeWidth, color, modifier = '') => {
+    const props = { key: `n${key += 1}`, className: 'gmg-graph-node' + modifier, cx: laneX(lane), cy, r }
+    if (color !== undefined) props.fill = color
+    if (strokeWidth !== undefined) props.strokeWidth = strokeWidth
+    return h('circle', props)
+  }
+
+  const paths = []
+
+  // Incoming lanes. `u` is the output lane the next pass-through input lane
+  // maps to; the commit's own lane is skipped past `output[l]` (its first
+  // parent), and a lane converging on the commit is drawn as a quarter-arc
+  // into the node rather than passed through.
+  let u = 0
+  for (let d = 0; d < input.length; d += 1) {
+    const lane = input[d]
+    if (lane.id === commit.sha) {
+      if (d !== laneIndex) {
+        paths.push(path(`M ${laneX(d)} 0 A ${GRAPH_LANE_WIDTH} ${GRAPH_LANE_WIDTH} 0 0 1 ${laneX(d) - GRAPH_LANE_WIDTH} ${cy} H ${laneX(laneIndex)}`, lane.color))
+      } else if (parents.length > 0) {
+        u += 1
       }
-      if (fromAbove && toBelow) edges.push({ lane, d: `M ${x(lane)} ${top} L ${x(lane)} ${bottom}` })
-      else if (fromAbove) edges.push({ lane, d: `M ${x(lane)} ${top} L ${x(lane)} ${cy}` })
-    }
-    // The commit's own lane: a line down from the row above, then its edges out.
-    if (row.incoming) edges.push({ lane: row.lane, d: `M ${x(row.lane)} ${top} L ${x(row.lane)} ${cy}` })
-    for (const parentLane of row.parentLanes) {
-      if (parentLane === row.lane) {
-        edges.push({ lane: row.lane, d: `M ${x(row.lane)} ${cy} L ${x(row.lane)} ${bottom}` })
-        continue
+    } else if (u < output.length && lane.id === output[u].id) {
+      if (d === u) {
+        paths.push(path(`M ${laneX(d)} 0 V ${height}`, lane.color))
+      } else {
+        paths.push(path(`M ${laneX(d)} 0 V ${cy - GRAPH_ELBOW_RADIUS} A ${GRAPH_ELBOW_RADIUS} ${GRAPH_ELBOW_RADIUS} 0 0 1 ${laneX(d) - GRAPH_ELBOW_RADIUS} ${cy} H ${laneX(u) + GRAPH_ELBOW_RADIUS} A ${GRAPH_ELBOW_RADIUS} ${GRAPH_ELBOW_RADIUS} 0 0 0 ${laneX(u)} ${cy + GRAPH_ELBOW_RADIUS} V ${height}`, lane.color))
       }
-      // A merge: bend across to the lane that parent already occupies, meeting
-      // it exactly at the row border so the two lines continue as one.
-      const x1 = x(row.lane)
-      const x2 = x(parentLane)
-      const bend = GRAPH_ROW_HEIGHT * 0.45
-      edges.push({ lane: parentLane, d: `M ${x1} ${cy} C ${x1} ${cy + bend}, ${x2} ${bottom - bend}, ${x2} ${bottom}` })
+      u += 1
     }
-    dots.push({ lane: row.lane, cy, labelled: (row.commit.refs?.length ?? 0) > 0 })
-  })
+  }
+
+  // Extra parents fork new lanes out of the merge node: a horizontal run to
+  // one lane short of the new column, then a quarter-arc down into it. The
+  // lane is found from the tail so a parent reached by two lines hands its
+  // fork to the one this commit just opened.
+  for (let i = 1; i < parents.length; i += 1) {
+    let p = -1
+    for (let idx = output.length - 1; idx >= 0; idx -= 1) {
+      if (output[idx].id === parents[i]) { p = idx; break }
+    }
+    if (p < 0) continue
+    paths.push(path(`M ${laneX(p) - GRAPH_LANE_WIDTH} ${cy} A ${GRAPH_LANE_WIDTH} ${GRAPH_LANE_WIDTH} 0 0 1 ${laneX(p)} ${height} M ${laneX(p) - GRAPH_LANE_WIDTH} ${cy} H ${laneX(laneIndex)}`, output[p].color))
+  }
+
+  // The node's own stubs: up from the row above to the node, down to the row
+  // below. A lane-less commit has no line above; a root has none below.
+  if (laneIndex < input.length) {
+    paths.push(path(`M ${laneX(laneIndex)} 0 V ${cy}`, input[laneIndex].color))
+  }
+  if (parents.length > 0) {
+    paths.push(path(`M ${laneX(laneIndex)} ${cy} V ${height}`, row.color))
+  }
+
+  // Nodes come last so they sit above every edge. The checkout is a hollow
+  // ring (its inner fill is left to CSS), a merge a larger solid dot, and a
+  // plain commit a smaller one.
+  const nodes = []
+  if (row.isCurrent === true) {
+    nodes.push(circle(laneIndex, GRAPH_NODE_RADIUS + 3, GRAPH_NODE_STROKE, row.color, ' is-current'))
+    nodes.push(circle(laneIndex, GRAPH_NODE_RADIUS - 2, GRAPH_NODE_STROKE * 2, undefined, ' is-current-inner'))
+  } else if (parents.length > 1) {
+    nodes.push(circle(laneIndex, GRAPH_NODE_RADIUS + 2, GRAPH_NODE_STROKE, row.color, ' is-merge'))
+    nodes.push(circle(laneIndex, GRAPH_NODE_RADIUS - 1, GRAPH_NODE_STROKE, row.color, ' is-merge-inner'))
+  } else {
+    nodes.push(circle(laneIndex, GRAPH_NODE_RADIUS + 1, GRAPH_NODE_STROKE, row.color, ' is-node'))
+  }
 
   return h(
     'svg',
-    { className: 'gmg-graph', width, height, viewBox: `0 0 ${width} ${height}`, 'aria-hidden': 'true', focusable: 'false' },
-    edges.map((edge, index) => h('path', { key: `e${index}`, d: edge.d, className: 'gmg-graph-edge', stroke: graphColor(edge.lane) })),
-    dots.map((dot, index) =>
-      h('circle', {
-        key: `n${index}`,
-        cx: x(dot.lane),
-        cy: dot.cy,
-        r: dot.labelled ? 3.7 : 2.9,
-        className: dot.labelled ? 'gmg-graph-dot is-ref' : 'gmg-graph-dot',
-        fill: dot.labelled ? graphColor(dot.lane) : 'var(--dsw-alias-bg-base)',
-        stroke: graphColor(dot.lane),
-      }),
-    ),
+    { className: 'gmg-graph', width: row.width, height, viewBox: `0 0 ${row.width} ${height}`, 'aria-hidden': 'true', focusable: 'false' },
+    ...paths,
+    ...nodes,
   )
 }

@@ -1,6 +1,6 @@
 {
   "name": "dsh-git-management",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Source Control for DeepSeek Harness: a sidebar Git panel with staging, commits, branches, sync and GitHub integration, modelled on the VS Code / Cursor Source Control view. · DSH 側邊欄 Git 原始碼管理：暫存、提交、分支、同步與 GitHub 整合。",
   "type": "module",
   "license": "MIT",
