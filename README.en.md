@@ -293,10 +293,10 @@ npm run build        # src/ → lib/ (lib is checked in)
 
 ## Install (plugin market)
 
-Listed on [awesome-dsh-plugin](https://awesome-dsh-plugin.com) / the DSH Plugin Market (search for `dsh-git-management`). Or install in one line:
+Published on npm ([`dsh-git-management`](https://www.npmjs.com/package/dsh-git-management)) and submitted to [awesome-dsh-plugin](https://awesome-dsh-plugin.com) for the DSH Plugin Market (searchable once reviewed). Install in one line today:
 
 ```sh
-dsh plugin --profile web add github:ET921/dsh-git-management
+dsh plugin --profile web add dsh-git-management
 ```
 
 > Alternatively, install the prebuilt Release tarball `dsh-git-management.tgz` from the DSH Desktop Plugin Manager — no build step, no build-script approval.

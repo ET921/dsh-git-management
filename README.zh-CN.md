@@ -293,10 +293,10 @@ npm run build        # src/ → lib/（lib 是入库的产物）
 
 ## 安装（插件市场）
 
-已上架 [awesome-dsh-plugin](https://awesome-dsh-plugin.com) / DSH Plugin Market（搜索 `dsh-git-management`）。也可以一行安装：
+已发布到 npm（[`dsh-git-management`](https://www.npmjs.com/package/dsh-git-management)），并已提交 [awesome-dsh-plugin](https://awesome-dsh-plugin.com) 收录（审核后即可在 DSH Plugin Market 搜到）。现在就能一行安装：
 
 ```sh
-dsh plugin --profile web add github:ET921/dsh-git-management
+dsh plugin --profile web add dsh-git-management
 ```
 
 > 另一条路：在 DSH Desktop 的 Plugin Manager 安装 Release 预构建包 `dsh-git-management.tgz`，免构建、免同意构建脚本。
