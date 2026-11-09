@@ -78,6 +78,13 @@ const BARE = { ...STATUS, bare: true, staged: [], changes: [], conflicts: [], up
 /** The narrow stash surface's host state (S11). */
 const stashHost = { count: 1, popConflicts: false }
 
+/**
+ * The host's credential store, as the panel sees it (S24): `saveToken` records
+ * what the host received and leaves the card authorised, `clearToken` forgets
+ * it and leaves the card asking for one again.
+ */
+const tokenHost = { saved: [], cleared: 0 }
+
 /** One-shot host failures by action: `{ status, body }`, an envelope (S13). */
 const failures = new Map()
 
@@ -286,6 +293,16 @@ function respond(action, params) {
           { path: 'C:/demo/.agents/worktrees/fix-ui', key: 'c:/demo/.agents/worktrees/fix-ui', branch: 'worktree-fix-ui', head: 'def5678', main: false, detached: false, bare: false, locked: false, prunable: false, dirty: 0, dirtyKnown: true },
         ],
       }
+    // The credential store the host owns (S24): a save makes the next `github`
+    // read authorised, a clear makes it ask for a token again.
+    case 'saveToken':
+      tokenHost.saved.push(params?.token ?? null)
+      githubAuthorized = true
+      return { saved: true }
+    case 'clearToken':
+      tokenHost.cleared += 1
+      githubAuthorized = false
+      return { cleared: true }
     default:
       return {}
   }
@@ -1507,30 +1524,60 @@ if (branchPill !== null) {
     })
   }
 
-  // ---- the token lives in memory only and rides only on github calls --------
+  // ---- the token is the host's: saved to its store, never carried on a call -
   {
     githubAuthorized = false
+    tokenHost.saved.length = 0
+    tokenHost.cleared = 0
     const select = container.querySelector('.gmg-select')
     await act(async () => {
       setValue(select, 'C:/other')
       await new Promise((resolve) => setTimeout(resolve, 120))
     })
+
+    // An unauthorised card asks for the token instead of failing quietly.
     const tokenInput = container.querySelector('.gmg-gh input[type="password"]')
-    check('an unauthorised card opens the token editor', tokenInput !== null, container.querySelector('.gmg-gh')?.textContent?.slice(0, 200))
-    const githubBefore = calls.filter((call) => call.action === 'github').length
+    check('an unauthorised card opens the token field', tokenInput !== null, container.querySelector('.gmg-gh')?.textContent?.slice(0, 200))
+    const hintZh = dictionaries['dsh-git-management']?.zh?.tokenHint ?? ''
+    const hintEn = dictionaries['dsh-git-management']?.en?.tokenHint ?? ''
+    check('the token hint no longer promises memory only', /内存|記憶體|memory only|in memory/i.test(`${hintZh}${hintEn}`) === false, hintZh)
+    check('the token hint names the DSH credential store', hintZh.includes('凭证') && /credential store/i.test(hintEn), { hintZh, hintEn })
+
+    const beforeSave = calls.length
+    // Type first, click second: the save button unlocks on the draft, and React
+    // only commits that state between two `act` boundaries.
     await act(async () => {
-      setValue(tokenInput, 'ghp_test_123')
+      setValue(tokenInput, 'ghp_host_123')
+      await new Promise((resolve) => setTimeout(resolve, 20))
     })
     const saveButton = [...container.querySelectorAll('.gmg-gh button')].find((button) => (button.textContent ?? '').includes('保存'))
     await act(async () => {
       click(saveButton)
-      await new Promise((resolve) => setTimeout(resolve, 80))
+      await new Promise((resolve) => setTimeout(resolve, 200))
     })
-    const savedCalls = calls.filter((call) => call.action === 'github').slice(githubBefore)
-    check('saving sends the token to the github action', savedCalls.some((call) => call.token === 'ghp_test_123'), savedCalls.map((call) => call.token))
-    check('no other action ever carries it', calls.every((call) => call.action === 'github' || call.token === null), calls.filter((call) => call.token !== null).map((call) => call.action))
+    const saveCall = calls.slice(beforeSave).find((call) => call.action === 'saveToken')
+    check('saving asks the host to store the token', saveCall?.params?.token === 'ghp_host_123', saveCall?.params)
+    check('the fake host received exactly that token', tokenHost.saved.join(',') === 'ghp_host_123', tokenHost.saved)
+    check('no request ever carries a top-level token', calls.every((call) => call.token === null), calls.filter((call) => call.token !== null).map((call) => call.action))
     check('the token never reaches localStorage', dom.window.localStorage.getItem('dsh-git-management/github-token') === null, dom.window.localStorage.getItem('dsh-git-management/github-token'))
-    githubAuthorized = true
+
+    // The host now answers as authorised: the form is gone, and the one token
+    // control left is "forget" — clearing is a real delete, not an empty field.
+    const inputAfterSave = container.querySelector('.gmg-gh input[type="password"]')
+    check('the token form disappears once the host accepts it', inputAfterSave === null, container.querySelector('.gmg-gh')?.textContent?.slice(0, 200))
+    const forget = container.querySelector('.gmg-gh button[aria-label="忘记令牌"]')
+    check('an authorised card offers the forget button', forget !== null, container.querySelector('.gmg-gh-head')?.innerHTML?.slice(0, 240))
+
+    const beforeClear = calls.length
+    await act(async () => {
+      click(forget)
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    })
+    const clearCall = calls.slice(beforeClear).find((call) => call.action === 'clearToken')
+    check('forgetting calls the host clearToken', clearCall !== undefined, calls.slice(beforeClear).map((call) => call.action))
+    check('the fake host recorded the clear', tokenHost.cleared === 1, tokenHost)
+    check('the card returns to the token field after a clear', container.querySelector('.gmg-gh input[type="password"]') !== null, container.querySelector('.gmg-gh')?.textContent?.slice(0, 200))
+
     await act(async () => {
       const backHome = container.querySelector('.gmg-select')
       setValue(backHome, 'C:/demo')

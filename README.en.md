@@ -132,7 +132,7 @@ sequenceDiagram
 
 - Detects the origin (ssh/https, GitHub Enterprise included).
 - Stars / forks / open issues, pull request list, issue list, and a one-click "new PR" from the current branch.
-- The GitHub token lives in this page load's memory only and is never written to browser storage — refill it after a reload; pushing uses your machine's own git credentials.
+- The GitHub token is stored in the local DSH credential store (0600, the same store as model API keys), so a reload or a restart does not ask for it again; “Forget token” on the card clears it. Pushing still uses your machine's own git credentials.
 
 ### Small extras
 
@@ -279,7 +279,7 @@ npm run build        # src/ → lib/ (lib is checked in)
 - `/dsh-git/api` accepts `content-type: application/json` only (which forces a preflight), plus a same-origin check and, when available, `connection.requestRejection`.
 - The request `path` must live inside a registered workspace (or a subdirectory), otherwise 403.
 - File arguments are always `:(literal)` pathspecs; `commitDiff` accepts only a 4–64 hex sha and passes `--no-ext-diff`.
-- The GitHub token lives in page-load memory only and is never persisted (localStorage is not used; stale entries from older builds are wiped on load), and it only rides on the `github` action; pushing uses your own git credentials.
+- The GitHub token is written by the host into the local DSH credential store (0600, the same store as model API keys); the browser neither keeps it nor sends it — the `github` action resolves it host-side, and stale localStorage entries from older builds are wiped on load; pushing uses your own git credentials.
 
 ### Known limits
 

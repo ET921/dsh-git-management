@@ -415,7 +415,16 @@ export function apply(ctx) {
         path: workspace.path,
       }))
     }
-    const actions = createActions({ git, workspaces: workspaceList })
+    const actions = createActions({
+      git,
+      workspaces: workspaceList,
+      // The credentials service is optional and may mount after this plugin, so
+      // it is read lazily per call rather than snapshotted here at mount time.
+      credentials: () => {
+        const service = ctx.get('credentials')
+        return service && typeof service === 'object' ? service : undefined
+      },
+    })
 
     ctx.effect(
       () =>

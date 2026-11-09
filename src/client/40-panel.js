@@ -1961,7 +1961,32 @@ function GithubCard(props) {
           t('newPull'),
         )
       : null,
+    // The credential lives on the host now, so forgetting it is a real action
+    // rather than "empty the field": it deletes the stored token, and the card
+    // drops back to its unauthorised face.
+    github.authorized === true
+      ? h(
+          'button',
+          {
+            className: 'gmg-btn is-ghost',
+            type: 'button',
+            title: t('forgetTokenHint'),
+            'aria-label': t('forgetToken'),
+            disabled: busy !== null,
+            onClick: () => gitStore.clearToken(t('tokenForgotten')),
+          },
+          h(IconClose, { size: 12 }),
+        )
+      : null,
   )
+
+  // A blank field is not a save: the button stays disabled and Enter does
+  // nothing. The draft is cleared only after the host accepts the write, so a
+  // failed save leaves what the user typed in place next to the error.
+  const saveDraft = async () => {
+    const stored = await gitStore.saveToken(tokenDraft, t('tokenSaved'))
+    if (stored === true) setTokenDraft('')
+  }
 
   let content = null
   if (github.authorized === false) {
@@ -1981,10 +2006,10 @@ function GithubCard(props) {
               value: tokenDraft,
               onChange: (event) => setTokenDraft(event.target.value),
               onKeyDown: (event) => {
-                if (event.key === 'Enter') gitStore.saveToken(tokenDraft)
+                if (event.key === 'Enter') saveDraft()
               },
             }),
-            h('button', { className: 'gmg-btn is-primary', type: 'button', onClick: () => gitStore.saveToken(tokenDraft) }, t('save')),
+            h('button', { className: 'gmg-btn is-primary', type: 'button', disabled: tokenDraft.trim() === '', onClick: saveDraft }, t('save')),
             h('a', { className: 'gmg-btn is-ghost', href: 'https://github.com/settings/tokens', target: '_blank', rel: 'noreferrer' }, h(IconExternal, { size: 12 }), t('createToken')),
           )
         : null,
