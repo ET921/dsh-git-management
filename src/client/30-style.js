@@ -349,72 +349,67 @@ const PANEL_CSS = `
 .gmg-diff-line.is-hunk { color: var(--dsw-alias-brand-primary); opacity: .95; }
 .gmg-diff-line.is-meta { color: var(--dsw-alias-label-secondary); opacity: .8; }
 .gmg-diff-note { padding: 8px 12px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.gmg-history { display: flex; flex-direction: column; position: relative; }
-/* Rows are pinned to the rail's row height: the SVG is one drawing for the
-   whole list, and a lane only stays continuous if every row is the same tall. */
+/* The list is one row per commit, and each row draws its own slice of the
+   graph. A lane stays continuous because every row is the same 22px and the
+   engine ends its edges exactly on the row's top and bottom borders. */
+.gmg-history {
+  display: flex; flex-direction: column;
+  /* The node ring is punched out of the row's own surface, so the engine can
+     paint the current node's inner circle with this token and a hovered row
+     still reads as one clean disc. */
+  --gmg-row-bg: var(--dsw-alias-bg-base);
+}
 .gmg-commit-row {
-  display: flex; align-items: center; gap: 8px;
-  height: 26px; padding: 0 12px;
-  padding-right: calc(var(--gmg-graph-w, 0px) + 12px);
+  display: flex; align-items: center;
+  height: 22px; line-height: 22px;
+  padding: 0 10px 0 0;
   box-sizing: border-box;
+  font-size: 13px;
   cursor: pointer;
 }
-.gmg-commit-row:hover { background: var(--gmg-hover); }
+.gmg-commit-row:hover { background: var(--gmg-hover); --gmg-row-bg: var(--gmg-hover); }
 .gmg-commit-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
-.gmg-graph { position: absolute; top: 0; right: 0; pointer-events: none; overflow: visible; }
-.gmg-graph-edge { fill: none; stroke-width: 1.9; stroke-linecap: round; opacity: 1; }
-.gmg-graph-dot { stroke-width: 2; }
+/* The graph rides in the row's flex flow at the left edge; the row carries no
+   left padding because the rail brings its own inset. */
+.gmg-commit-row .gmg-graph { flex: none; display: block; overflow: visible; }
+.gmg-graph-edge { fill: none; stroke-width: 1; stroke-linecap: round; }
+.gmg-graph-node { stroke: var(--gmg-row-bg); }
+.gmg-commit-row:hover .gmg-graph-node { stroke: transparent; }
+/* The checkout is a hollow ring: the engine draws the inner circle with no fill
+   so CSS can punch it out of the row's own surface. Left alone, a circle with no
+   fill falls back to SVG's default black, which reads as a dot in the middle of
+   the node — barely visible on the dark theme, plainly wrong on the light one.
+   The token is the row's, so a hovered row takes the highlight with it. */
+.gmg-graph-node.is-current-inner { fill: var(--gmg-row-bg); }
+/* Ref chips, Cursor-style: one named capsule, then one glyph per colour family.
+   These are filled marks, not tinted text — the name is what a reader acts on,
+   and at 11px it has to survive on a saturated ground. The ink is the theme's
+   paired mark ink (near-black in dark, white in light), the one value that
+   clears 4.5:1 on all three family colours. */
 .gmg-ref {
-  flex: none; max-width: 108px;
-  display: inline-flex; align-items: center; gap: 3px;
-  height: 17px; padding: 0 6px; border-radius: 5px;
-  font-family: var(--gmg-mono); font-size: 10.5px; line-height: 1; font-weight: 700;
-  border: 1px solid transparent;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: none; max-width: 108px; margin-left: 4px;
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 18px; padding: 0 8px; border-radius: 10px;
+  font-family: var(--gmg-mono); font-size: 11px; line-height: 1; font-weight: 600;
+  border: 0; overflow: hidden; white-space: nowrap;
+  color: var(--gmg-head-ink);
 }
 /* Where a ref lives is the point of these colours: blue is this machine,
-   violet is the server. Each chip is filled, not tinted, so it reads as a mark
-   rather than as quiet text; the glyph carries the same fact without colour. */
-.gmg-ref.is-head {
-  color: var(--gmg-head-ink);
-  background: var(--gmg-local);
-  border-color: color-mix(in srgb, var(--gmg-local) 70%, #000);
-  box-shadow: 0 1px 3px color-mix(in srgb, var(--gmg-local) 45%, transparent);
-}
-.gmg-ref.is-branch {
-  color: var(--gmg-local);
-  background: var(--gmg-local-soft);
-  border-color: color-mix(in srgb, var(--gmg-local) 45%, transparent);
-}
-.gmg-ref.is-remote {
-  color: var(--gmg-remote);
-  background: var(--gmg-remote-soft);
-  border-color: color-mix(in srgb, var(--gmg-remote) 45%, transparent);
-}
-.gmg-ref.is-tag {
-  color: var(--gmg-tag);
-  background: var(--gmg-tag-soft);
-  border-color: color-mix(in srgb, var(--gmg-tag) 45%, transparent);
-}
-/* The detached chip rides the tag ink, not the warn ink: the two inks are the
-   same amber in dark (#f59e0b both), but in light the warn ink is 4.32:1 on
-   this chip's surface — below the small-text floor the tag ink clears
-   (round2 D1 companion fix). */
-.gmg-ref.is-detached {
-  color: var(--gmg-tag);
-  background: var(--gmg-tag-soft);
-  border-color: color-mix(in srgb, var(--gmg-tag) 45%, transparent);
-}
+   violet is the server, amber is a tag. */
+.gmg-ref.is-head { background: var(--gmg-local); }
+.gmg-ref.is-branch { background: var(--gmg-local); }
+.gmg-ref.is-remote { background: var(--gmg-remote); }
+.gmg-ref.is-tag { background: var(--gmg-tag); }
+.gmg-ref.is-detached { background: var(--gmg-tag); }
+/* A family chip is icon-only, so it drops the capsule's horizontal padding and
+   takes its count in front of the glyph. */
+.gmg-ref.is-cluster { padding: 0 5px; gap: 3px; }
+.gmg-ref-count { font-size: 10px; font-weight: 700; }
 .gmg-ref svg { flex: none; opacity: 1; }
 /* The name is its own flex item so a long ref can end in an ellipsis instead of
    being sliced at the chip's edge; min-width: 0 is what lets a flex item shrink
    below its content width. */
 .gmg-ref-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gmg-ref-dot {
-  flex: none; width: 6px; height: 6px; border-radius: 50%;
-  background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, #fff 35%, transparent);
-}
-.gmg-ref-more { flex: none; font-size: 10px; color: var(--dsw-alias-label-secondary); }
 .gmg-sha {
   font-family: var(--gmg-mono); font-size: 11px;
   padding: 1px 6px; border-radius: 5px;
@@ -422,7 +417,16 @@ const PANEL_CSS = `
   color: var(--dsw-alias-label-secondary);
   flex: none;
 }
-.gmg-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+/* The subject is the only growing item in a row. The spacer stays in the markup
+   (the group heads use the same shape) but must not grow here, or it would take
+   half the free width and ellipsize the subject at 50% for no reason. */
+.gmg-commit-row .gmg-spacer { flex: 0 0 0; }
+.gmg-subject {
+  flex: 1; min-width: 0; margin-left: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+}
+.gmg-commit-row.is-current .gmg-subject { font-weight: 600; }
 .gmg-meta { color: var(--dsw-alias-label-secondary); font-size: 11px; white-space: nowrap; }
 .gmg-notice {
   display: flex; align-items: center; gap: 8px;
@@ -716,7 +720,9 @@ const PANEL_CSS = `
 .gmg-root.is-compact .gmg-diff pre { font-size: 11px; }
 .gmg-root.is-compact .gmg-gh-head { padding: 9px; gap: 8px; }
 .gmg-root.is-compact .gmg-gh-desc { padding: 0 9px 9px !important; }
-.gmg-root.is-compact .gmg-commit-row { padding: 0 9px; padding-right: calc(var(--gmg-graph-w, 0px) + 9px); gap: 6px; }
+/* Compact narrows the row's right inset and the chips; the 22px height stays,
+   because the graph's slice is drawn for it. */
+.gmg-root.is-compact .gmg-commit-row { padding: 0 8px 0 0; }
 .gmg-root.is-compact .gmg-ref { max-width: 84px; font-size: 10px; }
 .gmg-root.is-compact .gmg-wt { padding: 5px 6px 5px 8px; gap: 5px; }
 .gmg-root.is-compact .gmg-wt-path { display: none; }

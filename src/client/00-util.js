@@ -45,7 +45,17 @@ const API_ROUTE = '/dsh-git/api'
 /** Where the panel remembers the chosen repository across reloads. */
 const REPO_STORAGE_KEY = 'dsh-git-management/repo-path'
 
-/** Where earlier builds kept the GitHub token; the key is wiped on load (plan-v2 S24). */
+/**
+ * Where older builds kept the GitHub token — the only token key this file still
+ * knows (plan-v2 S24 / K1).
+ *
+ * The token itself is not a browser value any more: the host owns it. `saveToken`
+ * writes it into the DSH credential store (the same protected store as the model
+ * API keys) and the `github` action resolves it from there, so the token never
+ * reaches localStorage and a reload or a restart keeps working. What is left
+ * here is the migration: the key older builds wrote is wiped as soon as the
+ * bundle runs.
+ */
 const TOKEN_STORAGE_KEY = 'dsh-git-management/github-token'
 
 /**
@@ -69,34 +79,10 @@ function apiUrl(path) {
   }
 }
 
-/**
- * The GitHub token for this page load only (plan-v2 S24 / K1 decision (b)).
- *
- * It is deliberately memory-only: the token never reaches localStorage, and
- * the key older builds wrote is wiped as soon as the bundle runs. A reload
- * asks for it again — that is the whole cost of the guarantee.
- */
-let gmgSessionToken = null
-
-/**
- * Read the session token, if the user has entered one this page load.
- * @returns the token or null.
- */
-function readToken() {
-  return gmgSessionToken
-}
-
-/**
- * Remember (or forget) the GitHub token for this page load. Never persists.
- * @param token - the token, or null to forget it.
- */
-function rememberToken(token) {
-  gmgSessionToken = token === null || token === '' ? null : token
-}
-
-// Clear the persisted token every storage backend may still hold: the page can
-// load before the storage service is ready, so one more sweep rides on the
-// first user gesture as well.
+// Clear the token key older builds persisted: the page can load before the
+// storage service is ready, so one sweep rides on the first user gesture too.
+// This is migration cleanup, not a credential path — the live token is the
+// host's, and the browser never holds it.
 function eraseStoredToken() {
   try {
     window.localStorage.removeItem(TOKEN_STORAGE_KEY)
@@ -134,9 +120,9 @@ function writeStoredRepo(path) {
 /**
  * One request to the host action table.
  *
- * The session token rides on the `github` action and nothing else (plan-v2
- * §3.3-7): a `status` poll has no business carrying a credential, and every
- * extra transport is another place it could leak.
+ * No credential rides on this request (plan-v2 S24): the host resolves the
+ * GitHub token from its own credential store, so a `status` poll and a `github`
+ * read look the same on the wire, and there is no token in the browser to leak.
  *
  * @param action - action name (`status`, `commit`, …).
  * @param params - action arguments; `path` is the repository directory.
@@ -145,11 +131,10 @@ function writeStoredRepo(path) {
  *   error carries the envelope's stable `code` (§3.1) and `details`.
  */
 async function callHost(action, params = {}) {
-  const token = action === 'github' ? readToken() ?? undefined : undefined
   const response = await fetch(apiUrl(API_ROUTE), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ action, params, token }),
+    body: JSON.stringify({ action, params }),
     cache: 'no-store',
   })
   let body = null
